@@ -122,8 +122,8 @@ function renderGraph() {
   const totalWidth = columns * width + (columns - 1) * gapX + 24;
   const totalHeight = rows * height + (rows - 1) * gapY + 24;
   svg.setAttribute("viewBox", `0 0 ${totalWidth} ${totalHeight}`);
-  // Let the box grow with the graph instead of floating inside a fixed frame.
-  svg.style.minWidth = `${Math.min(totalWidth, 1120)}px`;
+  // The viewBox scales the graph to the panel; the stylesheet's floor only forces a
+  // horizontal scroll once the panel is too narrow to read at all.
 
   const broken = new Set();
   const brokenEdges = new Set();

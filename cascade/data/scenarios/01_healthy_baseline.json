@@ -1,0 +1,17 @@
+{
+  "arrival": "16:05",
+  "tags": [
+    "detection"
+  ],
+  "plan": false,
+  "execute": "NONE",
+  "id": "01_healthy_baseline",
+  "title": "An earlier arrival changes nothing downstream",
+  "description": "A commitment moves inside its slack. No constraint is violated, so there is no incident to recover from.",
+  "expect": {
+    "incident": false,
+    "hard_violations": 0,
+    "soft_violations": 0,
+    "violation_ids": []
+  }
+}

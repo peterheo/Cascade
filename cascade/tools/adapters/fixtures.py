@@ -72,3 +72,36 @@ class RestaurantAdapter(FixtureProvider):
 
 class TicketAdapter(FixtureProvider):
     kind = "ticket"
+
+
+class UnavailableProvider:
+    """A provider that cannot answer. Its silence is unknown state, not empty inventory."""
+
+    def __init__(self, kind: str, detail: str = "simulated provider outage"):
+        self.kind = kind
+        self.detail = detail
+
+    def query(self, commitment: Commitment, world: World) -> ProviderResult:
+        raise TimeoutError(self.detail)
+
+
+class EmptyInventoryProvider:
+    """A provider that answers, and the answer is that it has nothing for this search."""
+
+    def __init__(self, kind: str, exhausted: dict[str, str] | None = None):
+        self.kind = kind
+        self.exhausted = exhausted or {
+            "SUBSTITUTE": "Fixture inventory checked: no options in this search window."
+        }
+
+    def query(self, commitment: Commitment, world: World) -> ProviderResult:
+        now = datetime.now(UTC)
+        return ProviderResult(
+            provider=f"empty_{self.kind}",
+            commitment_id=commitment.id,
+            status="UNAVAILABLE",
+            evidence=f"empty-inventory:{self.kind}:{commitment.start_at.date()}",
+            exhausted=self.exhausted,
+            checked_at=now,
+            expires_at=now + timedelta(minutes=5),
+        )

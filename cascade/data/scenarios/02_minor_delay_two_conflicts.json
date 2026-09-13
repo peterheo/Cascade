@@ -1,0 +1,29 @@
+{
+  "arrival": "16:20",
+  "tags": [
+    "detection",
+    "propagation"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "02_minor_delay_two_conflicts",
+  "title": "A 10-minute delay breaks the transfer and the hotel arrival only",
+  "description": "Propagation stops where slack absorbs it: dinner and the movie keep their original times.",
+  "expect": {
+    "hard_violations": 2,
+    "soft_violations": 0,
+    "violation_ids": [
+      "flight_to_transfer",
+      "transfer_to_hotel"
+    ],
+    "affected": [
+      "transfer",
+      "hotel",
+      "restaurant",
+      "ticket"
+    ],
+    "planning_status": "COMPLETE",
+    "severity": "RED",
+    "min_candidates": 1
+  }
+}

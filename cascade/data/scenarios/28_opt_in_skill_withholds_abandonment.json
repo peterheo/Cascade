@@ -1,0 +1,20 @@
+{
+  "id": "28_opt_in_skill_withholds_abandonment",
+  "title": "An opt-in template that withholds abandonment narrows the answer",
+  "description": "Restricting the operator set is a real constraint: fewer plans survive, and none of them drops a commitment silently.",
+  "arrival": "19:05",
+  "tags": [
+    "recovery",
+    "policy"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "skill": "accommodation_first_recovery",
+  "expect": {
+    "hard_violations": 5,
+    "planning_status": "COMPLETE",
+    "candidates": 2,
+    "severity": "RED",
+    "skill": "accommodation_first_recovery"
+  }
+}

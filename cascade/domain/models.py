@@ -111,6 +111,10 @@ class Assessment(Record):
     violations: tuple[Violation, ...]
 
 
+IncidentSeverity = Literal["GREEN", "YELLOW", "RED", "BLACK"]
+IncidentStatus = Literal["OPEN", "RESOLVED", "DISMISSED"]
+
+
 class Incident(Record):
     id: str
     trigger_event_id: str
@@ -118,7 +122,17 @@ class Incident(Record):
     affected_commitment_ids: tuple[str, ...]
     threatened_intent_ids: tuple[str, ...]
     violations: tuple[Violation, ...]
-    status: Literal["OPEN", "RESOLVED"] = "OPEN"
+    status: IncidentStatus = "OPEN"
+    # Severity stays unset until recovery search establishes what is recoverable.
+    severity: IncidentSeverity | None = None
+    resolved_at: AwareDatetime | None = None
+    resolution_note: str = ""
+
+    @model_validator(mode="after")
+    def closed_incidents_record_when(self) -> Self:
+        if (self.status == "OPEN") != (self.resolved_at is None):
+            raise ValueError("a closed incident records when it was closed")
+        return self
 
 
 class EventResult(Record):

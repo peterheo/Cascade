@@ -14,6 +14,7 @@ from cascade.planning.models import (
     ProviderResult,
     RecoveryOption,
     SearchPolicy,
+    SkillRef,
 )
 from cascade.planning.operators import apply_option
 from cascade.tools.adapters.fixtures import RecoveryProvider
@@ -63,6 +64,7 @@ class RecoveryPlanner:
         incident: Incident,
         policy: SearchPolicy | None = None,
         operator_priorities: dict[str, tuple[str, ...]] | None = None,
+        skill: SkillRef | None = None,
     ) -> PlanningResult:
         policy = policy or SearchPolicy()
         known_intents = {i.id for i in world.intents}
@@ -114,6 +116,11 @@ class RecoveryPlanner:
                         )
                         result = None
             options = result.options if result else ()
+            # A skill may narrow which operators this search is allowed to use at all.
+            permitted = tuple(o for o in options if o.resolution in policy.allowed_resolutions)
+            if len(permitted) != len(options):
+                rejections["operator_not_allowed"] += len(options) - len(permitted)
+            options = permitted
             priorities = (operator_priorities or {}).get(cid, ())
             # Semantic hints can change search order, never invent or authorize options.
             if priorities:
@@ -261,5 +268,6 @@ class RecoveryPlanner:
             tool_calls=calls,
             expansions=expansions,
             policy=policy,
+            skill=skill,
             notes=tuple(notes),
         )

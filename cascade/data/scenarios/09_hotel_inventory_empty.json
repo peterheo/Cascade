@@ -1,0 +1,23 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "degradation",
+    "recovery"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "09_hotel_inventory_empty",
+  "title": "A hotel that answers with nothing is genuine exhaustion",
+  "description": "The same zero-option outcome as an outage, but with evidence, so it is reported as no feasible plan.",
+  "faults": {
+    "empty_inventory": [
+      "hotel"
+    ]
+  },
+  "expect": {
+    "planning_status": "NO_FEASIBLE_PLAN",
+    "candidates": 0,
+    "severity": "BLACK",
+    "exhaustion_reported": true
+  }
+}

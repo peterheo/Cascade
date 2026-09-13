@@ -1,37 +1,74 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+import asyncio
+from decimal import Decimal
+from pathlib import Path
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
-from cascade.execution.service import ExecutionService
+from cascade.memory.preferences import Directive, Preference, PreferenceError, preference
 from cascade.planning.models import SearchPolicy
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
 from cascade.reasoning.service import SemanticService
+from cascade.security.approvals import ApprovalError
 from cascade.service import CascadeService, ConflictError
+
+STATIC = Path(__file__).parent / "static"
 
 
 class PlanRequest(Record):
     expected_version: int = Field(ge=0)
-    policy: SearchPolicy = Field(default_factory=SearchPolicy)
+    # None means "use the matched skill's limits"; an explicit policy overrides them.
+    policy: SearchPolicy | None = None
+    skill: str | None = None
 
 
 class ConfirmRequest(Record):
     expected_version: int = Field(ge=0)
 
 
-class ApprovalRequest(ConfirmRequest):
+class ExecuteRequest(Record):
+    expected_version: int = Field(ge=0)
+    actor: str = Field(default="user", min_length=1, max_length=100)
+
+
+class ApproveRequest(Record):
+    """Informed consent: the caller echoes the exact actions and the exact total."""
+
+    actor: str = Field(default="user", min_length=1, max_length=100)
+    approved_action_ids: tuple[str, ...] = Field(min_length=1)
+    acknowledged_amount: Decimal = Field(ge=0)
+
+
+class RejectRequest(Record):
+    actor: str = Field(default="user", min_length=1, max_length=100)
+    note: str = Field(default="", max_length=1000)
+
+
+class PreferenceRequest(Record):
+    """Explicit preferences only. A learned one is promoted, never authored here."""
+
+    statement: str = Field(min_length=1, max_length=500)
+    directive: Directive
+    value: str = Field(min_length=1, max_length=200)
+
+
+class PreferenceStatusRequest(Record):
+    status: Literal["ACTIVE", "SUGGESTED", "RETIRED"]
+    actor: str = Field(default="user", min_length=1, max_length=100)
+
+
+class IncidentApproveRequest(Record):
     plan_id: str
-
-
-class ExecuteRequest(ConfirmRequest):
-    approval_id: str
-
-
-class AdvanceRequest(Record):
-    expected_step: int = Field(ge=0)
+    expected_version: int = Field(ge=0)
+    acknowledged_amount: Decimal = Field(ge=0)
+    actor: str = Field(default="user", min_length=1, max_length=100)
 
 
 def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
@@ -41,90 +78,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     service = CascadeService(demo_world())
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
-    executor = ExecutionService(service)
-    demo_event_id = None
-
-    @app.get("/v1/workspace")
-    def workspace():
-        with service.lock:
-            return {
-                "state": {"world": service.world, "assessment": evaluate(service.world)},
-                "incidents": service.incidents,
-                "planning": service.latest_planning,
-                "assisted": semantic.latest_assisted,
-                "approvals": tuple(executor.approvals.values()),
-                "executions": tuple(executor.executions.values()),
-                "audit": service.audit,
-                "reasoning": reasoner.status() if isinstance(reasoner, NebiusReasoner) else None,
-            }
-
-    @app.post("/v1/incidents/{incident_id}/approve")
-    def approve(incident_id: str, request: ApprovalRequest):
-        try:
-            return executor.decide(incident_id, request.plan_id, request.expected_version, True)
-        except KeyError as exc:
-            raise HTTPException(404, "unknown plan") from exc
-
-    @app.post("/v1/incidents/{incident_id}/reject")
-    def reject(incident_id: str, request: ApprovalRequest):
-        try:
-            return executor.decide(incident_id, request.plan_id, request.expected_version, False)
-        except KeyError as exc:
-            raise HTTPException(404, "unknown plan") from exc
-
-    @app.post("/v1/recovery-plans/{plan_id}/execute")
-    def execute(plan_id: str, request: ExecuteRequest):
-        try:
-            return executor.start(plan_id, request.approval_id, request.expected_version)
-        except KeyError as exc:
-            raise HTTPException(404, "unknown plan") from exc
-
-    @app.get("/v1/executions/{execution_id}")
-    def execution(execution_id: str):
-        with service.lock:
-            if execution_id not in executor.executions:
-                raise HTTPException(404, "unknown execution")
-            return executor.executions[execution_id]
-
-    @app.post("/v1/executions/{execution_id}/advance")
-    def advance(execution_id: str, request: AdvanceRequest):
-        try:
-            return executor.advance(execution_id, request.expected_step)
-        except KeyError as exc:
-            raise HTTPException(404, "unknown execution") from exc
-
-    @app.post("/v1/executions/{execution_id}/cancel")
-    def cancel(execution_id: str):
-        try:
-            return executor.cancel(execution_id)
-        except KeyError as exc:
-            raise HTTPException(404, "unknown execution") from exc
-
-    @app.post("/v1/demo/reset")
-    async def reset():
-        nonlocal demo_event_id
-        async with semantic.lock:
-            with service.lock:
-                if any(e.status == "RUNNING" for e in executor.executions.values()):
-                    raise ConflictError("cancel active execution before resetting the demo")
-                service.world = demo_world().model_copy(
-                    update={"version": service.world.version + 1}
-                )
-                service.events.clear()
-                service.incidents.clear()
-                service.plans.clear()
-                service.plan_incidents.clear()
-                service.latest_planning = None
-                semantic.requests.clear()
-                semantic.extractions.clear()
-                semantic.event_to_extraction.clear()
-                semantic.latest_assisted = None
-                executor.approvals.clear()
-                executor.executions.clear()
-                executor.bases.clear()
-                demo_event_id = None
-                service.audit.append({"type": "demo.reset", "world_version": service.world.version})
-                return {"world": service.world, "assessment": evaluate(service.world)}
+    # Exposed for tests and for anything that has the app but not the closure.
+    app.state.service = service
 
     @app.exception_handler(ReasoningError)
     async def reasoning_error(request, exc):
@@ -169,7 +124,10 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     async def assisted_plan(incident_id: str, request: PlanRequest):
         try:
             return await semantic.assisted_plan(
-                incident_id, request.expected_version, request.policy
+                incident_id,
+                request.expected_version,
+                request.policy or SearchPolicy(),
+                request.skill,
             )
         except KeyError as exc:
             raise HTTPException(404, "unknown incident") from exc
@@ -177,6 +135,13 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             raise
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        """The product surface is served by the API itself; there is no build step."""
+        return FileResponse(STATIC / "index.html")
 
     @app.get("/health")
     def health():
@@ -215,6 +180,30 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                     return item
         raise HTTPException(404, "unknown incident")
 
+    @app.get("/v1/stream")
+    async def stream(request: Request):
+        """Server-sent notifications. They say what changed; state still comes from /v1."""
+        queue = service.stream.subscribe()
+        if queue is None:
+            raise HTTPException(503, "too many stream subscribers")
+
+        async def notifications():
+            try:
+                while not await request.is_disconnected():
+                    while queue:
+                        yield queue.popleft().encode()
+                    # A heartbeat keeps proxies from closing an idle stream silently.
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(0.25)
+            finally:
+                service.stream.unsubscribe(queue)
+
+        return StreamingResponse(
+            notifications(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/v1/audit")
     def audit():
         with service.lock:
@@ -224,7 +213,12 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.post("/v1/incidents/{incident_id}/replan")
     def plan(incident_id: str, request: PlanRequest):
         try:
-            return service.plan(incident_id, request.expected_version, request.policy)
+            return service.plan(
+                incident_id,
+                request.expected_version,
+                request.policy,
+                skill_name=request.skill,
+            )
         except ConflictError as exc:
             raise HTTPException(409, str(exc)) from exc
         except KeyError as exc:
@@ -240,19 +234,167 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             candidate = service.plans[plan_id]
             return {"plan": candidate, "stale": candidate.based_on_version != service.world.version}
 
+    @app.post("/v1/recovery-plans/{plan_id}/execute")
+    def execute(plan_id: str, request: ExecuteRequest):
+        try:
+            return service.execute(plan_id, request.expected_version, request.actor)
+        except ConflictError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, "unknown recovery plan") from exc
+
+    @app.get("/v1/approvals")
+    def approvals():
+        with service.lock:
+            return tuple(service.approvals.values())
+
+    @app.get("/v1/approvals/{request_id}")
+    def approval(request_id: str):
+        with service.lock:
+            if request_id not in service.approvals:
+                raise HTTPException(404, "unknown approval request")
+            current = service.approvals[request_id]
+            return {
+                "approval": current,
+                "stale": current.based_on_version != service.world.version,
+            }
+
+    @app.post("/v1/approvals/{request_id}/approve")
+    def approve(request_id: str, request: ApproveRequest):
+        try:
+            return service.approve(
+                request_id,
+                request.actor,
+                request.approved_action_ids,
+                request.acknowledged_amount,
+            )
+        except ConflictError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, "unknown approval request") from exc
+        except ApprovalError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/v1/approvals/{request_id}/reject")
+    def reject_approval(request_id: str, request: RejectRequest):
+        try:
+            return service.reject(request_id, request.actor, request.note)
+        except KeyError as exc:
+            raise HTTPException(404, "unknown approval request") from exc
+        except ApprovalError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/v1/executions")
+    def executions():
+        with service.lock:
+            return tuple(service.executions.values())
+
+    @app.get("/v1/executions/{execution_id}")
+    def execution(execution_id: str):
+        with service.lock:
+            if execution_id not in service.executions:
+                raise HTTPException(404, "unknown execution")
+            return service.executions[execution_id]
+
+    @app.post("/v1/incidents/{incident_id}/approve")
+    def approve_incident(incident_id: str, request: IncidentApproveRequest):
+        """Choose a plan, consent to its exact cost, and run it in one informed step."""
+        with service.lock:
+            if request.plan_id not in service.plan_incidents.get(incident_id, ()):
+                raise HTTPException(404, "that plan does not belong to this incident")
+        proposed = ExecuteRequest(expected_version=request.expected_version, actor=request.actor)
+        first = execute(request.plan_id, proposed)
+        if first.status != "AWAITING_APPROVAL":
+            return first
+        approve(
+            first.approval_request.id,
+            ApproveRequest(
+                actor=request.actor,
+                approved_action_ids=tuple(i.action_id for i in first.approval_request.items),
+                acknowledged_amount=request.acknowledged_amount,
+            ),
+        )
+        return execute(
+            request.plan_id,
+            ExecuteRequest(expected_version=request.expected_version, actor=request.actor),
+        )
+
+    @app.post("/v1/incidents/{incident_id}/reject")
+    def reject_incident(incident_id: str, request: RejectRequest):
+        try:
+            return service.dismiss(incident_id, request.actor, request.note)
+        except ConflictError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, "unknown incident") from exc
+
+    @app.get("/v1/security/sandbox")
+    def sandbox():
+        """Denied actions stay visible; the boundary is evidence, not decoration."""
+        boundary = service.gateway.sandbox
+        if boundary is None:
+            return {"enforced": False, "policy": None, "denials": []}
+        return {"enforced": True, "policy": boundary.policy, "denials": boundary.denials}
+
+    @app.get("/v1/skills")
+    def skills():
+        """Versioned recovery templates. They bound the planner; they are not prompts."""
+        return service.skills
+
+    @app.get("/v1/preferences")
+    def preferences():
+        with service.lock:
+            return tuple(service.preferences.values())
+
+    @app.post("/v1/preferences")
+    def add_preference(request: PreferenceRequest) -> Preference:
+        try:
+            return service.add_preference(
+                preference(request.statement, request.directive, request.value)
+            )
+        except (PreferenceError, ValidationError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.patch("/v1/preferences/{preference_id}")
+    def update_preference(preference_id: str, request: PreferenceStatusRequest) -> Preference:
+        try:
+            return service.set_preference_status(preference_id, request.status, request.actor)
+        except KeyError as exc:
+            raise HTTPException(404, "unknown preference") from exc
+        except (PreferenceError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.delete("/v1/preferences/{preference_id}", status_code=204)
+    def delete_preference(preference_id: str) -> None:
+        try:
+            service.delete_preference(preference_id)
+        except KeyError as exc:
+            raise HTTPException(404, "unknown preference") from exc
+
+    @app.get("/v1/memory/resolutions")
+    def resolutions():
+        with service.lock:
+            return tuple(service.resolutions)
+
+    @app.get("/v1/memory/suggestions")
+    def suggestions():
+        """Derived from past choices. Promote one explicitly to make it policy."""
+        return service.suggestions()
+
+    @app.get("/v1/permissions")
+    def permissions():
+        return service.permissions
+
     @app.post("/v1/demo/scenarios/{scenario_id}/inject")
     def inject(scenario_id: str):
-        nonlocal demo_event_id
         if scenario_id != "flight_delay":
             raise HTTPException(404, "unknown scenario")
-        with service.lock:
-            if demo_event_id in service.events:
-                return service.events[demo_event_id][1]
-            event = delay_event(version=service.world.version)
-            result = ingest(event)
-            demo_event_id = event.event_id
-            return result
+        # Fixed event identity makes repeated clicks idempotent.
+        return ingest(delay_event())
 
+    from apps.api.simulation import create_app as create_simulation_app
+
+    app.mount("/simulation", create_simulation_app(reasoning_provider))
     return app
 
 

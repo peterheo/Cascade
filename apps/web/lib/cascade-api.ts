@@ -24,7 +24,7 @@ export function isLocal() {
 }
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   if (!isLocal()) return structuredClone(previewRequest(path, body)) as T;
-  const response = await fetch('/cascade-api' + path, {
+  const response = await fetch('/cascade-api/simulation' + path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),

@@ -1,0 +1,19 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "security",
+    "execution"
+  ],
+  "plan": true,
+  "execute": "WITHOUT_APPROVAL",
+  "id": "17_approval_gate_holds_every_effect",
+  "title": "Nothing external happens before the user approves",
+  "description": "Execution stops at the gate with the exact actions, tiers and total, and no provider is touched.",
+  "expect": {
+    "planning_status": "COMPLETE",
+    "execution_status": "AWAITING_APPROVAL",
+    "side_effects": 0,
+    "final_hard_violations": 5,
+    "incident_status": "OPEN"
+  }
+}

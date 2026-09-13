@@ -1,0 +1,30 @@
+{
+  "arrival": "18:00",
+  "tags": [
+    "propagation"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "04_three_level_cascade",
+  "title": "The delay reaches every level of the dependency chain",
+  "description": "Blast radius covers transfer, hotel, dinner and the movie, three edges away from the trigger.",
+  "expect": {
+    "hard_violations": 5,
+    "soft_violations": 0,
+    "violation_ids": [
+      "flight_to_transfer",
+      "hotel_cutoff",
+      "hotel_to_restaurant",
+      "restaurant_to_ticket",
+      "transfer_to_hotel"
+    ],
+    "affected": [
+      "transfer",
+      "hotel",
+      "restaurant",
+      "ticket"
+    ],
+    "planning_status": "COMPLETE",
+    "severity": "RED"
+  }
+}

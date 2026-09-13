@@ -1,0 +1,18 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "security",
+    "execution"
+  ],
+  "plan": true,
+  "execute": "APPROVED",
+  "id": "22_sandbox_spend_ceiling",
+  "title": "The boundary's spend ceiling is independent of the product's approval",
+  "description": "A user-approved booking above the sandbox ceiling is still refused, and the denial is logged.",
+  "sandbox_max_amount": "100",
+  "expect": {
+    "execution_status": "DENIED",
+    "side_effects": 0,
+    "sandbox_denials": 1
+  }
+}

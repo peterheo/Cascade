@@ -81,15 +81,57 @@ def delay_event(version: int = 0, arrival: str = "19:05") -> Mutation:
     )
 
 
+def execute_demo(service: CascadeService, incident_id: str, as_json: bool = False) -> None:
+    """Plan, approve explicitly, execute through the gateway, and re-verify the world."""
+    planning = service.plan(incident_id, service.world.version)
+    chosen = min(planning.candidates, key=lambda p: p.additional_cost)
+    pending = service.execute(chosen.id, service.world.version, "demo_user")
+    request = pending.approval_request
+    service.approve(
+        request.id,
+        "demo_user",
+        tuple(item.action_id for item in request.items),
+        request.total_amount,
+    )
+    executed = service.execute(chosen.id, service.world.version, "demo_user")
+    if as_json:
+        print(executed.model_dump_json(indent=2))
+        return
+    incident = service.incident(incident_id)
+    print(f"CASCADE EXECUTION — incident severity {incident.severity}\n")
+    print(f"Chosen plan: additional spend EUR {chosen.additional_cost}; refund EUR {chosen.refund}")
+    print(f"Approval {request.id}: {len(request.items)} actions, EUR {request.total_amount}")
+    print(f"Held before approval: {pending.status}; side effects {pending.side_effects}\n")
+    for step in executed.steps:
+        call = step.call.result if step.call else None
+        reference = call.external_reference if call else "none"
+        verified = "verified" if call and call.verified else "no external effect"
+        print(f"  [{step.status}] {step.commitment_id} — {step.resolution} ({verified})")
+        print(f"      tier {step.call.action.risk_tier if step.call else 0}; ref {reference}")
+    print(f"\nStatus: {executed.status}; world version {executed.world_version_after}")
+    print(f"Remaining violations: {len(executed.remaining_violations)}")
+    print(f"Incident: {service.incident(incident_id).status}")
+    for line in executed.notes:
+        print(f"  {line}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Cascade's deterministic flight-delay demo")
     parser.add_argument("--json", action="store_true", help="Print structured incident evidence")
     parser.add_argument(
         "--plan", action="store_true", help="Compare feasible recovery alternatives"
     )
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Approve the cheapest alternative, execute it, and verify the new state",
+    )
     args = parser.parse_args()
     service = CascadeService(demo_world())
     result = service.ingest(delay_event())
+    if args.execute:
+        execute_demo(service, result.incident.id, as_json=args.json)
+        return
     if args.plan:
         planning = service.plan(result.incident.id, service.world.version)
         if args.json:

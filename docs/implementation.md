@@ -102,3 +102,181 @@ documented in [nebius.md](nebius.md).
 API testing follows the [FastAPI testing guide](https://fastapi.tiangolo.com/tutorial/testing/).
 Models use [Pydantic validation](https://docs.pydantic.dev/latest/concepts/validators/)
 to reject invalid intervals, unknown references, and unexpected fields.
+
+## Phase 5 — approval, execution, and verification
+
+`cascade/tools/permissions.py` assigns the design's risk tier from the operation and
+the committed amount. A tier is never model-assigned and never caller-supplied:
+`ToolAction` recomputes both its read/write mode and its tier and rejects any value
+that disagrees, so an API caller cannot present a purchase as a tier-1 draft.
+
+`cascade/tools/gateway.py` is the only path to an external effect. It authorizes in a
+fixed order — product policy, adapter availability, sandbox boundary, then approval —
+so a user is never asked to approve an action the boundary would refuse anyway. Writes
+are followed by an independent read: `apply` reports what it did, `verify` reads the
+provider's own record back, and the call is successful only when the observed state
+matches the action's postcondition. An adapter exception becomes unknown state, never
+success and never proof of unavailability.
+
+`cascade/tools/adapters/booking.py` mutates the same fixture inventory the planner
+searched. Writes are keyed by an idempotency key, so a retry reuses the existing
+confirmation instead of double-booking. Withdrawn inventory and write failures are
+explicit switches for the demo and evals rather than random faults.
+
+`cascade/security/openshell.py` is a deny-by-default capability profile: allowed
+providers, operations, endpoints, and a spend ceiling, with every denial retained in
+a log the API exposes. Enforcement is in-process, so it constrains Cascade's own
+executor rather than the operating system; the `ExecutionSandbox` protocol is the seam
+a real OpenShell runner plugs into. The sandbox ceiling is independent of user
+approval: an approved action can still be refused by the boundary.
+
+`cascade/security/approvals.py` requires informed consent. A grant must name every
+requested action and echo the exact total; a partial list or a mismatched amount is
+rejected. Approvals are bound to a plan and to the world version they were built on.
+
+`cascade/execution/executor.py` authorizes every write before performing any of them,
+so a plan is never half-authorized. Each step then re-checks live availability, writes,
+verifies, applies the option to the world, bumps the version, and re-evaluates. A
+failure stops the run: confirmed side effects stay committed as authoritative state and
+the result is PARTIAL with `replan_required`, because the remainder of a plan is not
+assumed to still hold. COMPLETED additionally requires that the resulting world equals
+the planned world and carries no hard violation; the model validator enforces that a
+completed execution cannot be reported without verification.
+
+Incidents now close. `severity` is assigned from what search actually found — GREEN for
+a cost-free same-provider recovery, YELLOW when every intent survives with degradation,
+RED when no feasible plan keeps every intent, BLACK when nothing feasible was found —
+and incidents resolve when their violations disappear, whatever removed them, or when a
+user dismisses them explicitly.
+
+## Phase 6 — scenario suite and evaluation
+
+`cascade/evals` runs a declarative suite rather than more prose. Each scenario in
+`cascade/data/scenarios/` varies the same demo itinerary along one axis — arrival time,
+search policy, permission policy, sandbox profile, injected fault, execution mode — and
+states what should happen. Scenario files ship inside the wheel for the same reason the
+provider fixtures do, so `cascade-eval` works from an installed package; the design's
+proposed top-level `scenarios/` and `evals/` directories are collapsed into the package
+for that reason.
+
+Fault injection is explicit and reproducible. `query_outage` makes a read adapter fail;
+`empty_inventory` makes it answer with nothing; `withdraw` removes inventory between
+the quote and the write; `reject_write` refuses the write. Nothing is random, and the
+suite distinguishes the four outcomes those faults produce: BLOCKED, NO_FEASIBLE_PLAN,
+a pre-check abort with no side effect, and a partial execution.
+
+Metrics follow the design's evaluation section: conflict-detection precision and recall
+against enumerated violation IDs, the share of surfaced plans that pass the constraint
+engine, the share of mutation attempts blocked in security scenarios, and the share of
+degradation scenarios that report exhaustion instead of surfacing a plan. A metric with
+no supporting scenarios reports `None` rather than a flattering default.
+
+A green report only means something if the harness can go red, so scenario setup runs
+inside the per-scenario guard — a malformed scenario fails itself rather than the run —
+and the tests assert that a deliberately wrong expectation and a broken scenario both
+come back as failures.
+
+## Phase 4 — product surface
+
+The UI is plain HTML, CSS and ES modules under `apps/api/static`, served by the API
+itself at `/`. This is a deliberate deviation from the design's Next.js/React Flow
+recommendation. The demo is a single-process local system; a separate build, dev server
+and proxy would add two failure modes and a toolchain to every run without changing what
+the product has to show. `apps/web` is the untouched starter scaffold that came with the
+repository and is not part of the running system.
+
+One page carries the five surfaces the design calls for: the stable-state dashboard, the
+incident view with the blast radius on the dependency graph, the recovery comparison, the
+approval gate, and the audit and boundary trail. The graph lays commitments out by
+longest-path depth, so it renders any DAG rather than the demo's chain, and it stops
+colouring the blast radius once the incident closes.
+
+The disruption inbox completes the chain the design's success criteria describe: a
+message arrives in natural language, Nemotron returns a typed change with an exact source
+quote and a confidence, and the change reaches state only when the user confirms it. The
+preview never carries `apply`, so the server's default keeps it a proposal. When no key is
+configured the endpoint answers 503 and the page says so and keeps the deterministic
+simulator available, because a missing model must not block the deterministic path.
+
+The UI holds no authority of its own. It reads the world version from the server and
+echoes it back on every write, it sends back the approval's own action IDs and total
+rather than recomputing them, and it renders each commitment's own wall clock instead of
+converting to the viewer's timezone — the constraint engine reasoned about the
+itinerary's local times, and a converted display would misreport them. Tests assert that
+every `/v1` path the script calls exists on the API, so the two cannot drift apart
+silently.
+
+## Reusable recovery skills
+
+A skill is a versioned recovery template in `cascade/data/skills/`, not a prompt. It
+states which commitment kinds its trigger fires on, how severe the incident must be,
+which downstream kinds it knows how to repair, which recovery operators it permits, the
+order to try them in, and its search limits. Everything the trigger reads — the trigger
+commitment's kind, the count of hard violations, the worst delay — comes off the incident
+deterministically.
+
+Permitting operators is a real constraint, so `SearchPolicy` carries
+`allowed_resolutions` and the planner drops provider options outside that set, counting
+them as `operator_not_allowed` rejections. Preservation is never listed anywhere: it is
+the base case the planner constructs itself, not a provider operator, and both the policy
+and the skill schema reject any attempt to restrict it.
+
+Selection is deterministic — the most specific trigger wins, then the highest version,
+then the name — and a skill may be marked `auto_select: false`. `accommodation_first_recovery`
+is opt-in for a reason worth stating: withholding abandonment can turn a recoverable day
+into an unrecoverable one, so narrowing the operator set has to be the user's choice
+rather than a default the system makes for them.
+
+Precedence is explicit. An explicit policy from the caller outranks the template's
+limits, and explicit operator priorities — including Nemotron's suggested ordering —
+outrank its ordering. The applied template's name and version are recorded on the
+planning result, so the audit trail shows which template bounded a given search.
+
+## Personal memory and preference learning
+
+A preference is stored only if it narrows something the deterministic layer already
+reads: a required intent, a spending ceiling, or a forbidden operator. Anything that
+cannot be projected onto the policy would be decoration, so the schema rejects it — a
+non-numeric spending limit, or an attempt to forbid preservation, which is the base case
+rather than an operator.
+
+Preferences narrow rather than replace. They add required intents, lower the ceiling to
+the minimum of the two, and remove operators, so they are the highest authority without
+ever widening a caller's explicit limits. A set that would forbid every operator is
+refused at the point it is stored, not discovered at plan time.
+
+Learned preferences are never policy by default. They are created SUGGESTED, carry the
+resolution IDs they were derived from, and can only become ACTIVE through a person — the
+service refuses a promotion from any other actor, and refuses a learned preference
+created active at all. Promotion keeps the provenance: source stays `learned`, with its
+confidence and evidence count intact.
+
+Learning reads revealed choices, not stated ones. A pair (kept, given up) counts only
+when a rejected candidate would have reversed it — keeping an intent nothing threatened
+says nothing about what a user values. Confidence is the agreement ratio recomputed from
+the whole record each time rather than decayed on a timer, so a reversed choice lowers it
+immediately instead of ageing out, and a suggestion needs at least three observations and
+70% agreement before it is worth showing. Every resolution is retained, dismissals
+included: declining recovery is an outcome, not the absence of one.
+
+## Observability and the event stream
+
+`GET /v1/stream` completes the design's API surface with server-sent notifications:
+state changes, incident creation and resolution, plans, approval requests and decisions,
+completed actions, and preference changes.
+
+Notifications describe what changed and carry no state — no world, no commitments, only
+identifiers, the world version, and a monotonic event ID. A reader still fetches state
+through the versioned endpoints, which keeps optimistic concurrency intact instead of
+letting a page render from a message that may already be stale. The UI follows this
+rule: an event only schedules a read, and a burst of events coalesces into one.
+
+Publishing never blocks the writer. Each subscriber holds a bounded queue that drops the
+oldest notification rather than the newest, so a stalled reader loses history instead of
+memory, and the monotonic IDs let it notice the gap. Subscribers are capped and the
+endpoint answers 503 rather than accepting an unbounded number of readers.
+
+Streaming cannot be exercised through Starlette's synchronous test client or httpx's
+ASGI transport — both buffer the response — so the suite covers the stream where the
+behaviour actually lives: fan-out, bounded queues, the subscriber cap, the wire format,
+the exact lifecycle a full run announces, and the absence of state in every notification.

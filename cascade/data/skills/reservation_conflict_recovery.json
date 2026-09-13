@@ -1,0 +1,33 @@
+{
+  "name": "reservation_conflict_recovery",
+  "version": 1,
+  "description": "A booking itself moved and the commitments around it must follow.",
+  "trigger": {
+    "commitment_kinds": [
+      "restaurant",
+      "ticket"
+    ],
+    "min_delay_minutes": 0
+  },
+  "inspect_kinds": [
+    "restaurant",
+    "ticket"
+  ],
+  "operators": [
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED",
+    "ABANDONED"
+  ],
+  "order": [
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED",
+    "ABANDONED"
+  ],
+  "limits": {
+    "max_candidates": 12,
+    "max_tool_calls": 10
+  },
+  "notes": "Narrower blast radius: only the reservations themselves are inspected."
+}

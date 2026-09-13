@@ -1,0 +1,17 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "detection",
+    "security"
+  ],
+  "plan": false,
+  "execute": "NONE",
+  "id": "25_low_confidence_event_is_not_applied",
+  "title": "A low-confidence extraction cannot mutate authoritative state",
+  "description": "The event is refused at the boundary, so no incident is created from an unreliable reading.",
+  "confidence": 0.5,
+  "expect": {
+    "ingest_rejected": true,
+    "incident": false
+  }
+}

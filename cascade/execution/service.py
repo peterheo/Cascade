@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from cascade.constraints.engine import evaluate
-from cascade.execution.models import ActionOutcome, Approval, Execution
+from cascade.execution.simulation_models import ActionOutcome, Approval, Execution
 from cascade.planning.demo import demo_planner
 from cascade.planning.operators import apply_option
 from cascade.service import CascadeService, ConflictError
@@ -41,7 +41,7 @@ class ExecutionService:
     def decide(self, incident_id, plan_id, expected_version, approve):
         with self.core.lock:
             plan = self._plan(plan_id, expected_version)
-            if self.core.plan_incidents.get(plan_id) != incident_id:
+            if plan_id not in self.core.plan_incidents.get(incident_id, ()):
                 raise ConflictError("plan belongs to a different incident")
             if any(e.status == "RUNNING" for e in self.executions.values()):
                 raise ConflictError("finish or cancel the active execution first")
@@ -224,12 +224,7 @@ class ExecutionService:
                     }
                 )
                 if last and verified:
-                    self.core.incidents = [
-                        i.model_copy(update={"status": "RESOLVED"})
-                        if i.id == approval.incident_id
-                        else i
-                        for i in self.core.incidents
-                    ]
+                    self.core._reconcile(assessment)
             self.executions[execution_id] = updated
             self.core.audit.append(
                 {

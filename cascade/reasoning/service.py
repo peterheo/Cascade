@@ -178,7 +178,11 @@ class SemanticService:
                 return updated
 
     async def assisted_plan(
-        self, incident_id: str, expected_version: int, policy: SearchPolicy
+        self,
+        incident_id: str,
+        expected_version: int,
+        policy: SearchPolicy,
+        skill_name: str | None = None,
     ) -> AssistedPlanningResult:
         async with self.lock:
             with self.core.lock:
@@ -233,6 +237,7 @@ class SemanticService:
                     {s.commitment_id: s.priorities for s in strategy.suggestions}
                     if strategy
                     else None,
+                    skill_name,
                 )
             if planning.candidates:
                 try:

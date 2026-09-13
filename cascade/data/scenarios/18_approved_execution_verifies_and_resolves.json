@@ -1,0 +1,18 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "execution",
+    "recovery"
+  ],
+  "plan": true,
+  "execute": "APPROVED",
+  "id": "18_approved_execution_verifies_and_resolves",
+  "title": "An approved plan executes, verifies, and closes the incident",
+  "description": "Every write is read back from the provider, and the rebuilt world carries no hard violation.",
+  "expect": {
+    "execution_status": "COMPLETED",
+    "side_effects": 4,
+    "final_hard_violations": 0,
+    "incident_status": "RESOLVED"
+  }
+}

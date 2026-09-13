@@ -22,6 +22,6 @@ test('all five replay plans require approval and finish without hard conflicts',
     assert.equal(execution.status, 'SUCCEEDED');
     workspace = await api('/v1/workspace');
     assert.equal(workspace.incidents[0].status, 'RESOLVED');
-    assert.equal(workspace.state.assessment.violations.filter(v => v.severity === 'HARD').length, 0);
+    assert.equal(workspace.state.assessment.violations.filter(v => v.severity === 'hard').length, 0);
   }
 });

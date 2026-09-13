@@ -1,0 +1,17 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "detection",
+    "resilience"
+  ],
+  "plan": false,
+  "execute": "NONE",
+  "id": "26_stale_version_event_is_rejected",
+  "title": "An event built against an old version is rejected",
+  "description": "Optimistic concurrency protects the world from a writer that never saw the current state.",
+  "expected_version": 3,
+  "expect": {
+    "ingest_rejected": true,
+    "incident": false
+  }
+}

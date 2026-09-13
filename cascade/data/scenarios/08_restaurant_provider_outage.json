@@ -1,0 +1,22 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "resilience",
+    "degradation"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "08_restaurant_provider_outage",
+  "title": "A restaurant outage blocks the search at a mid-chain commitment",
+  "description": "An unanswered provider anywhere in the chain blocks the result rather than degrading it silently.",
+  "faults": {
+    "query_outage": [
+      "restaurant"
+    ]
+  },
+  "expect": {
+    "planning_status": "BLOCKED",
+    "candidates": 0,
+    "severity": "BLACK"
+  }
+}

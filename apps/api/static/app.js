@@ -693,7 +693,33 @@ async function confirmExtraction(button) {
   });
 }
 
+function listen() {
+  // Notifications say what changed; state still comes from the versioned endpoints.
+  const source = new EventSource("/v1/stream");
+  let pending = null;
+  source.onmessage = null;
+  for (const name of [
+    "state.changed",
+    "incident.created",
+    "incident.updated",
+    "incident.resolved",
+    "recovery.plan.created",
+    "approval.required",
+    "approval.decided",
+    "action.completed",
+    "preference.changed",
+  ]) {
+    source.addEventListener(name, () => {
+      // Coalesce a burst of notifications into one read.
+      clearTimeout(pending);
+      pending = setTimeout(() => refresh().catch(() => {}), 150);
+    });
+  }
+}
+
 el("inject").addEventListener("click", (event) => inject(event.currentTarget));
 el("read-message").addEventListener("click", (event) => readMessage(event.currentTarget));
 renderReasoningStatus();
-refresh().catch((error) => toast(error.message));
+refresh()
+  .then(listen)
+  .catch((error) => toast(error.message));

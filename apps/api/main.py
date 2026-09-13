@@ -1,9 +1,10 @@
+import asyncio
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 
@@ -77,6 +78,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     service = CascadeService(demo_world())
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
+    # Exposed for tests and for anything that has the app but not the closure.
+    app.state.service = service
 
     @app.exception_handler(ReasoningError)
     async def reasoning_error(request, exc):
@@ -176,6 +179,30 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 if item.id == incident_id:
                     return item
         raise HTTPException(404, "unknown incident")
+
+    @app.get("/v1/stream")
+    async def stream(request: Request):
+        """Server-sent notifications. They say what changed; state still comes from /v1."""
+        queue = service.stream.subscribe()
+        if queue is None:
+            raise HTTPException(503, "too many stream subscribers")
+
+        async def notifications():
+            try:
+                while not await request.is_disconnected():
+                    while queue:
+                        yield queue.popleft().encode()
+                    # A heartbeat keeps proxies from closing an idle stream silently.
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(0.25)
+            finally:
+                service.stream.unsubscribe(queue)
+
+        return StreamingResponse(
+            notifications(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/v1/audit")
     def audit():

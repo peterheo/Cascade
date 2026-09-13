@@ -88,6 +88,10 @@ amount. The second execute call then runs each action through the gateway, verif
 against the provider record, and re-evaluates the world. `GET /v1/security/sandbox`
 shows the capability profile and every denied action.
 
+`GET /v1/stream` emits server-sent notifications; the UI follows it, so a second tab
+updates without being touched. Notifications name what changed and carry no state — a
+reader fetches it back through the versioned endpoints.
+
 `GET`/`POST`/`PATCH`/`DELETE /v1/preferences` manage explicit preferences, which narrow
 every subsequent search. `GET /v1/memory/resolutions` shows what was actually chosen, and
 `GET /v1/memory/suggestions` shows what repeated choices imply — suggestions only, until
@@ -135,6 +139,7 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
   permitted operators, operator ordering, and search limits.
 - Explicit preferences that narrow the search, resolution memory including dismissals,
   and learned suggestions that stay suggestions until a person promotes them.
+- Server-sent notifications on `GET /v1/stream`, followed live by the UI.
 
 Projected times are feasibility evidence, **not changed reservations or verified
 availability**. Soft constraints are assessed without shifting downstream commitments.
@@ -180,8 +185,7 @@ UI tests assert that every endpoint the page calls exists on the API.
 
 1. PostgreSQL persistence and durable audit storage.
 2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
-3. Live streaming (`GET /v1/stream`) so the UI updates without a refresh, and a
-   preference surface in the UI for the memory the API already exposes.
+3. A preference and memory surface in the UI for what the API already exposes.
 
 Resource conflicts, authentication, and persistent audit storage are not implemented
 yet. Execution mutates fixture provider ledgers in this process;

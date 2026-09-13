@@ -82,6 +82,13 @@ def test_the_ui_can_choose_a_recovery_template():
     assert "opt-in" in SCRIPT
 
 
+def test_the_ui_follows_the_event_stream_without_trusting_it():
+    assert 'new EventSource("/v1/stream")' in SCRIPT
+    # Notifications only trigger a read; the page never renders from the event body.
+    assert "refresh()" in SCRIPT
+    assert "event.data" not in SCRIPT
+
+
 def test_the_ui_reads_times_without_rewriting_them():
     # Converting to the viewer's timezone would misreport the itinerary's own clock.
     assert "toLocaleTimeString" not in SCRIPT

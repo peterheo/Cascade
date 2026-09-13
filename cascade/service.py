@@ -21,6 +21,7 @@ from cascade.memory.resolutions import (
     record_execution,
     suggest,
 )
+from cascade.observability.events import EventStream
 from cascade.planning.demo import demo_planner
 from cascade.planning.models import CandidatePlan, PlanningResult, SearchPolicy
 from cascade.planning.planner import RecoveryPlanner
@@ -62,6 +63,7 @@ class CascadeService:
         self.preferences: dict[str, Preference] = {}
         self.resolutions: list[ResolutionRecord] = []
         self.searches: dict[str, PlanningResult] = {}
+        self.stream = EventStream()
         self.approvals: dict[str, ApprovalRequest] = {}
         self.executions: dict[str, ExecutionResult] = {}
 
@@ -92,6 +94,9 @@ class CascadeService:
                     )
                 )
                 self.audit.append({"type": "incident.resolved", "incident_id": incident.id})
+                self.stream.publish(
+                    "incident.resolved", self.world.version, incident_id=incident.id
+                )
 
     def dismiss(self, incident_id: str, actor: str, note: str) -> Incident:
         """The user can decline recovery; that is an explicit outcome, not a failure."""
@@ -116,6 +121,9 @@ class CascadeService:
                     "note": note,
                 }
             )
+            self.stream.publish(
+                "incident.updated", self.world.version, incident_id=incident_id, status="DISMISSED"
+            )
             return dismissed
 
     def add_preference(self, item: Preference) -> Preference:
@@ -127,6 +135,7 @@ class CascadeService:
             self.audit.append(
                 {"type": "preference.added", "preference": item.model_dump(mode="json")}
             )
+            self.stream.publish("preference.changed", self.world.version, preference_id=item.id)
             return item
 
     def set_preference_status(self, preference_id: str, status: str, actor: str) -> Preference:
@@ -145,6 +154,9 @@ class CascadeService:
                     "actor": actor,
                 }
             )
+            self.stream.publish(
+                "preference.changed", self.world.version, preference_id=preference_id
+            )
             return updated
 
     def delete_preference(self, preference_id: str) -> None:
@@ -153,6 +165,9 @@ class CascadeService:
                 raise KeyError(preference_id)
             del self.preferences[preference_id]
             self.audit.append({"type": "preference.deleted", "preference_id": preference_id})
+            self.stream.publish(
+                "preference.changed", self.world.version, preference_id=preference_id
+            )
 
     def suggestions(self) -> tuple[Preference, ...]:
         """What repeated choices imply. Nothing here is applied until a person says so."""
@@ -177,6 +192,9 @@ class CascadeService:
             self.audit.append(
                 {"type": "approval.granted", "approval": decided.model_dump(mode="json")}
             )
+            self.stream.publish(
+                "approval.decided", self.world.version, approval_id=request_id, approved=True
+            )
             return decided
 
     def reject(self, request_id: str, actor: str, note: str) -> ApprovalRequest:
@@ -187,6 +205,9 @@ class CascadeService:
             self.approvals[request_id] = decided
             self.audit.append(
                 {"type": "approval.rejected", "approval": decided.model_dump(mode="json")}
+            )
+            self.stream.publish(
+                "approval.decided", self.world.version, approval_id=request_id, approved=False
             )
             return decided
 
@@ -241,6 +262,22 @@ class CascadeService:
             self.audit.append(
                 {"type": "recovery.executed", "result": result.model_dump(mode="json")}
             )
+            if result.approval_request is not None:
+                self.stream.publish(
+                    "approval.required",
+                    self.world.version,
+                    approval_id=result.approval_request.id,
+                    plan_id=plan.id,
+                )
+            self.stream.publish(
+                "action.completed",
+                self.world.version,
+                execution_id=result.id,
+                status=result.status,
+                side_effects=result.side_effects,
+            )
+            if result.side_effects:
+                self.stream.publish("state.changed", self.world.version, reason="execution")
             return result
 
     def skill_for(self, incident: Incident, name: str | None) -> Skill | None:
@@ -289,6 +326,14 @@ class CascadeService:
                 self._replace_incident(incident.model_copy(update={"severity": classify(result)}))
             self.audit.append(
                 {"type": "recovery.planned", "result": result.model_dump(mode="json")}
+            )
+            self.stream.publish(
+                "recovery.plan.created",
+                self.world.version,
+                incident_id=incident_id,
+                search_id=result.id,
+                status=result.status,
+                candidates=len(result.candidates),
             )
             return result
 
@@ -372,4 +417,14 @@ class CascadeService:
                     "result": result.model_dump(mode="json"),
                 }
             )
+            self.stream.publish(
+                "state.changed", world.version, reason="event", event_id=event.event_id
+            )
+            if incident:
+                self.stream.publish(
+                    "incident.created",
+                    world.version,
+                    incident_id=incident.id,
+                    violations=len(incident.violations),
+                )
             return result

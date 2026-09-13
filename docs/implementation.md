@@ -258,3 +258,25 @@ the whole record each time rather than decayed on a timer, so a reversed choice 
 immediately instead of ageing out, and a suggestion needs at least three observations and
 70% agreement before it is worth showing. Every resolution is retained, dismissals
 included: declining recovery is an outcome, not the absence of one.
+
+## Observability and the event stream
+
+`GET /v1/stream` completes the design's API surface with server-sent notifications:
+state changes, incident creation and resolution, plans, approval requests and decisions,
+completed actions, and preference changes.
+
+Notifications describe what changed and carry no state — no world, no commitments, only
+identifiers, the world version, and a monotonic event ID. A reader still fetches state
+through the versioned endpoints, which keeps optimistic concurrency intact instead of
+letting a page render from a message that may already be stale. The UI follows this
+rule: an event only schedules a read, and a burst of events coalesces into one.
+
+Publishing never blocks the writer. Each subscriber holds a bounded queue that drops the
+oldest notification rather than the newest, so a stalled reader loses history instead of
+memory, and the monotonic IDs let it notice the gap. Subscribers are capped and the
+endpoint answers 503 rather than accepting an unbounded number of readers.
+
+Streaming cannot be exercised through Starlette's synchronous test client or httpx's
+ASGI transport — both buffer the response — so the suite covers the stream where the
+behaviour actually lives: fan-out, bounded queues, the subscriber cap, the wire format,
+the exact lifecycle a full run announces, and the absence of state in every notification.

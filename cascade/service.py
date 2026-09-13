@@ -16,6 +16,7 @@ from cascade.execution.models import ExecutionResult
 from cascade.graph.traversal import descendants
 from cascade.planning.demo import demo_planner
 from cascade.planning.models import CandidatePlan, PlanningResult, SearchPolicy
+from cascade.planning.planner import RecoveryPlanner
 from cascade.planning.severity import classify
 from cascade.security.approvals import ApprovalRequest, grant, reject
 from cascade.tools.demo import demo_gateway
@@ -35,6 +36,7 @@ class CascadeService:
         world: World,
         gateway: ToolGateway | None = None,
         permissions: PermissionPolicy | None = None,
+        planner: RecoveryPlanner | None = None,
     ):
         evaluate(world)
         self.world = world
@@ -44,6 +46,7 @@ class CascadeService:
         self.lock = RLock()
         self.plans: dict[str, CandidatePlan] = {}
         self.plan_incidents: dict[str, tuple[str, ...]] = {}
+        self.planner = planner or demo_planner()
         self.gateway = gateway or demo_gateway()
         self.executor = PlanExecutor(self.gateway)
         self.permissions = permissions or PermissionPolicy()
@@ -196,7 +199,7 @@ class CascadeService:
             incident = next((i for i in self.incidents if i.id == incident_id), None)
             if incident is None:
                 raise KeyError(incident_id)
-            result = demo_planner().plan(self.world, incident, policy, operator_priorities)
+            result = self.planner.plan(self.world, incident, policy, operator_priorities)
             self.plans.update({p.id: p for p in result.candidates})
             self.plan_incidents[incident.id] = tuple(p.id for p in result.candidates)
             if incident.status == "OPEN":

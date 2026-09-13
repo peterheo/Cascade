@@ -1,0 +1,26 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "resilience",
+    "execution"
+  ],
+  "plan": true,
+  "execute": "APPROVED",
+  "id": "24_partial_execution_demands_a_replan",
+  "title": "A mid-plan write failure keeps what landed and replans the rest",
+  "description": "Two confirmed side effects stay authoritative; the remainder is never assumed to still hold.",
+  "faults": {
+    "reject_write": {
+      "mock_restaurant": [
+        "dinner_waiver"
+      ]
+    }
+  },
+  "expect": {
+    "execution_status": "PARTIAL",
+    "side_effects": 2,
+    "final_hard_violations": 2,
+    "incident_status": "OPEN",
+    "replan_feasible": true
+  }
+}

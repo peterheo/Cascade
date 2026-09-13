@@ -1,0 +1,18 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "execution",
+    "resilience"
+  ],
+  "plan": true,
+  "execute": "APPROVED_TWICE",
+  "id": "19_replayed_plan_is_stale",
+  "title": "Re-running an executed plan is refused, not repeated",
+  "description": "The plan was built against an older version, so the replay changes nothing and asks for a replan.",
+  "expect": {
+    "execution_status": "STALE",
+    "side_effects": 0,
+    "final_hard_violations": 0,
+    "incident_status": "RESOLVED"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "security",
+    "execution"
+  ],
+  "plan": true,
+  "execute": "APPROVED",
+  "id": "20_spending_denied_by_permission_tier",
+  "title": "A permission ceiling denies spending that no approval can unlock",
+  "description": "Autonomy is independent of confidence: a tier above the approvable maximum simply cannot run.",
+  "permissions": {
+    "approval_max_tier": 3
+  },
+  "expect": {
+    "execution_status": "DENIED",
+    "side_effects": 0,
+    "final_hard_violations": 5,
+    "incident_status": "OPEN"
+  }
+}

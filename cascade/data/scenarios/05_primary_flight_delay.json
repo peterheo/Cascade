@@ -1,0 +1,33 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "detection",
+    "recovery"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "05_primary_flight_delay",
+  "title": "The primary demo: five conflicts, five Pareto alternatives, no dominant answer",
+  "description": "No feasible plan keeps every intent, so severity is RED and the tradeoff belongs to the user.",
+  "expect": {
+    "hard_violations": 5,
+    "violation_ids": [
+      "flight_to_transfer",
+      "hotel_cutoff",
+      "hotel_to_restaurant",
+      "restaurant_to_ticket",
+      "transfer_to_hotel"
+    ],
+    "affected": [
+      "transfer",
+      "hotel",
+      "restaurant",
+      "ticket"
+    ],
+    "planning_status": "COMPLETE",
+    "candidates": 5,
+    "severity": "RED",
+    "exhaustion_reported": true,
+    "incident_status": "OPEN"
+  }
+}

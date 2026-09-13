@@ -1,0 +1,22 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "resilience",
+    "degradation"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "07_hotel_provider_outage",
+  "title": "A hotel provider outage is blocked, not unrecoverable",
+  "description": "The adapter could not answer. That is unknown state, and it must never be reported as empty inventory.",
+  "faults": {
+    "query_outage": [
+      "hotel"
+    ]
+  },
+  "expect": {
+    "planning_status": "BLOCKED",
+    "candidates": 0,
+    "severity": "BLACK"
+  }
+}

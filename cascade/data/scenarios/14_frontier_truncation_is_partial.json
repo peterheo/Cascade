@@ -1,0 +1,19 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "policy"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "14_frontier_truncation_is_partial",
+  "title": "A truncated frontier is reported as partial, never as optimal",
+  "description": "One surviving candidate is still feasible; the status says optimality was not established.",
+  "policy": {
+    "max_candidates": 1
+  },
+  "expect": {
+    "planning_status": "PARTIAL",
+    "candidates": 1,
+    "severity": "RED"
+  }
+}

@@ -6,8 +6,9 @@ Cascade models personal commitments as a dependency graph. When a flight changes
 deterministic code identifies downstream timing failures before an AI proposes recovery.
 
 This repository implements **Phase 1 — deterministic core**, **Phase 2 — recovery search**,
-**Phase 3 — Nemotron integration**, and **Phase 5 — approval, execution and
-verification** of the supplied [architecture specification](docs/architecture.md). It is a local, single-user demo,
+**Phase 3 — Nemotron integration**, **Phase 5 — approval, execution and verification**,
+and **Phase 6 — evaluation** of the supplied
+[architecture specification](docs/architecture.md). It is a local, single-user demo,
 with synthetic data and in-memory state that resets on restart.
 
 Phase 3 live extraction, strategy generation, and comparison have been verified
@@ -107,11 +108,29 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
 - Step-by-step execution with pre-checks, postcondition verification, partial-execution
   commits, and mandatory replanning after any failure.
 - Deterministic incident severity, incident resolution, and explicit dismissal.
+- A declarative 26-scenario evaluation suite with reproducible fault injection and
+  precision/recall, feasibility, security and degradation metrics.
 
 Projected times are feasibility evidence, **not changed reservations or verified
 availability**. Soft constraints are assessed without shifting downstream commitments.
 Cycles are rejected in this temporal graph; non-temporal relationships will need a
 separate graph layer. All travel times and provider rules here are explicit fixtures.
+
+## Evaluate
+
+```sh
+uv run cascade-eval
+uv run cascade-eval --tag security
+uv run cascade-eval --json
+```
+
+Twenty-six deterministic scenarios vary one axis each — arrival time, search policy,
+permission policy, sandbox profile, injected fault, execution mode — and assert what
+should happen. The report gives conflict-detection precision and recall, the share of
+surfaced plans passing the constraint engine, the share of mutation attempts blocked in
+security scenarios, and the share of degradation scenarios that report exhaustion
+instead of a guess. Metrics with no supporting scenarios report `None` rather than a
+flattering default, and the suite is part of `pytest`.
 
 ## Validate
 

@@ -1,0 +1,22 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "degradation",
+    "policy"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "11_transfer_inventory_empty",
+  "title": "A required intent with no inventory ends the search",
+  "description": "Transport is a required intent in the demo policy, so losing it cannot be degraded away.",
+  "faults": {
+    "empty_inventory": [
+      "transfer"
+    ]
+  },
+  "expect": {
+    "planning_status": "NO_FEASIBLE_PLAN",
+    "candidates": 0,
+    "severity": "BLACK"
+  }
+}

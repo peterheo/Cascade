@@ -1,0 +1,26 @@
+{
+  "arrival": "21:30",
+  "tags": [
+    "degradation",
+    "recovery"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "06_arrival_too_late_to_recover",
+  "title": "An arrival after every alternative leaves nothing feasible",
+  "description": "Search returns no plan and says so, instead of surfacing an alternative it cannot support.",
+  "expect": {
+    "hard_violations": 5,
+    "violation_ids": [
+      "flight_to_transfer",
+      "hotel_cutoff",
+      "hotel_to_restaurant",
+      "restaurant_to_ticket",
+      "transfer_to_hotel"
+    ],
+    "planning_status": "NO_FEASIBLE_PLAN",
+    "candidates": 0,
+    "severity": "BLACK",
+    "exhaustion_reported": true
+  }
+}

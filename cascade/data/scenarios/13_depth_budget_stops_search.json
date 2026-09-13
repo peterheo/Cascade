@@ -1,0 +1,20 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "policy",
+    "degradation"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "13_depth_budget_stops_search",
+  "title": "A depth budget stops the search without proving anything",
+  "description": "BUDGET_EXHAUSTED is distinct from exhaustion: the search was cut short, the world was not.",
+  "policy": {
+    "max_depth": 1
+  },
+  "expect": {
+    "planning_status": "BUDGET_EXHAUSTED",
+    "candidates": 0,
+    "severity": "BLACK"
+  }
+}

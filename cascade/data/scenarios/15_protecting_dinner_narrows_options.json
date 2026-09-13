@@ -1,0 +1,24 @@
+{
+  "arrival": "19:05",
+  "tags": [
+    "policy",
+    "recovery"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "15_protecting_dinner_narrows_options",
+  "title": "Requiring the dinner intent collapses five options to one",
+  "description": "An explicit user priority reorders what is acceptable without weakening feasibility checks.",
+  "policy": {
+    "required_intent_ids": [
+      "intent_transfer",
+      "intent_hotel",
+      "intent_restaurant"
+    ]
+  },
+  "expect": {
+    "planning_status": "COMPLETE",
+    "candidates": 1,
+    "severity": "RED"
+  }
+}

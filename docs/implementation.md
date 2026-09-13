@@ -148,3 +148,30 @@ a cost-free same-provider recovery, YELLOW when every intent survives with degra
 RED when no feasible plan keeps every intent, BLACK when nothing feasible was found —
 and incidents resolve when their violations disappear, whatever removed them, or when a
 user dismisses them explicitly.
+
+## Phase 6 — scenario suite and evaluation
+
+`cascade/evals` runs a declarative suite rather than more prose. Each scenario in
+`cascade/data/scenarios/` varies the same demo itinerary along one axis — arrival time,
+search policy, permission policy, sandbox profile, injected fault, execution mode — and
+states what should happen. Scenario files ship inside the wheel for the same reason the
+provider fixtures do, so `cascade-eval` works from an installed package; the design's
+proposed top-level `scenarios/` and `evals/` directories are collapsed into the package
+for that reason.
+
+Fault injection is explicit and reproducible. `query_outage` makes a read adapter fail;
+`empty_inventory` makes it answer with nothing; `withdraw` removes inventory between
+the quote and the write; `reject_write` refuses the write. Nothing is random, and the
+suite distinguishes the four outcomes those faults produce: BLOCKED, NO_FEASIBLE_PLAN,
+a pre-check abort with no side effect, and a partial execution.
+
+Metrics follow the design's evaluation section: conflict-detection precision and recall
+against enumerated violation IDs, the share of surfaced plans that pass the constraint
+engine, the share of mutation attempts blocked in security scenarios, and the share of
+degradation scenarios that report exhaustion instead of surfacing a plan. A metric with
+no supporting scenarios reports `None` rather than a flattering default.
+
+A green report only means something if the harness can go red, so scenario setup runs
+inside the per-scenario guard — a malformed scenario fails itself rather than the run —
+and the tests assert that a deliberately wrong expectation and a broken scenario both
+come back as failures.

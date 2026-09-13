@@ -1,0 +1,30 @@
+{
+  "arrival": "17:00",
+  "tags": [
+    "detection",
+    "propagation"
+  ],
+  "plan": true,
+  "execute": "NONE",
+  "id": "03_hotel_cutoff_missed",
+  "title": "A later arrival additionally misses the hotel's own check-in cutoff",
+  "description": "A provider-owned deadline fails on top of the precedence chain; dinner is now threatened too.",
+  "expect": {
+    "hard_violations": 4,
+    "soft_violations": 0,
+    "violation_ids": [
+      "flight_to_transfer",
+      "hotel_cutoff",
+      "hotel_to_restaurant",
+      "transfer_to_hotel"
+    ],
+    "affected": [
+      "transfer",
+      "hotel",
+      "restaurant",
+      "ticket"
+    ],
+    "planning_status": "COMPLETE",
+    "severity": "RED"
+  }
+}

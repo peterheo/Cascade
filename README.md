@@ -88,6 +88,11 @@ amount. The second execute call then runs each action through the gateway, verif
 against the provider record, and re-evaluates the world. `GET /v1/security/sandbox`
 shows the capability profile and every denied action.
 
+`GET`/`POST`/`PATCH`/`DELETE /v1/preferences` manage explicit preferences, which narrow
+every subsequent search. `GET /v1/memory/resolutions` shows what was actually chosen, and
+`GET /v1/memory/suggestions` shows what repeated choices imply — suggestions only, until
+a person promotes one with `PATCH`.
+
 `GET /v1/skills` lists the versioned recovery templates. Planning matches one from the
 incident automatically; `{"skill": "..."}` on the plan request chooses one explicitly, and
 an explicit `policy` overrides the template's limits.
@@ -128,6 +133,8 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
   tradeoff comparison, approval gate, and audit/boundary trail.
 - Versioned recovery skills that bound the planner: deterministic trigger matching,
   permitted operators, operator ordering, and search limits.
+- Explicit preferences that narrow the search, resolution memory including dismissals,
+  and learned suggestions that stay suggestions until a person promotes them.
 
 Projected times are feasibility evidence, **not changed reservations or verified
 availability**. Soft constraints are assessed without shifting downstream commitments.
@@ -173,11 +180,11 @@ UI tests assert that every endpoint the page calls exists on the API.
 
 1. PostgreSQL persistence and durable audit storage.
 2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
-3. Live streaming (`GET /v1/stream`) so the UI updates without a refresh, and preference
-   learning from resolution history.
+3. Live streaming (`GET /v1/stream`) so the UI updates without a refresh, and a
+   preference surface in the UI for the memory the API already exposes.
 
-Resource conflicts, general user policy, authentication, and persistent audit storage
-are not implemented yet. Execution mutates fixture provider ledgers in this process;
+Resource conflicts, authentication, and persistent audit storage are not implemented
+yet. Execution mutates fixture provider ledgers in this process;
 no real booking, refund or message is ever sent. The sandbox is enforced in-process,
 so it constrains Cascade's executor rather than the operating system. Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness

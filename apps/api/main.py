@@ -1,5 +1,6 @@
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -9,6 +10,7 @@ from pydantic import Field, ValidationError
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
+from cascade.memory.preferences import Directive, Preference, PreferenceError, preference
 from cascade.planning.models import SearchPolicy
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
@@ -46,6 +48,19 @@ class ApproveRequest(Record):
 class RejectRequest(Record):
     actor: str = Field(default="user", min_length=1, max_length=100)
     note: str = Field(default="", max_length=1000)
+
+
+class PreferenceRequest(Record):
+    """Explicit preferences only. A learned one is promoted, never authored here."""
+
+    statement: str = Field(min_length=1, max_length=500)
+    directive: Directive
+    value: str = Field(min_length=1, max_length=200)
+
+
+class PreferenceStatusRequest(Record):
+    status: Literal["ACTIVE", "SUGGESTED", "RETIRED"]
+    actor: str = Field(default="user", min_length=1, max_length=100)
 
 
 class IncidentApproveRequest(Record):
@@ -298,6 +313,46 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     def skills():
         """Versioned recovery templates. They bound the planner; they are not prompts."""
         return service.skills
+
+    @app.get("/v1/preferences")
+    def preferences():
+        with service.lock:
+            return tuple(service.preferences.values())
+
+    @app.post("/v1/preferences")
+    def add_preference(request: PreferenceRequest) -> Preference:
+        try:
+            return service.add_preference(
+                preference(request.statement, request.directive, request.value)
+            )
+        except (PreferenceError, ValidationError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.patch("/v1/preferences/{preference_id}")
+    def update_preference(preference_id: str, request: PreferenceStatusRequest) -> Preference:
+        try:
+            return service.set_preference_status(preference_id, request.status, request.actor)
+        except KeyError as exc:
+            raise HTTPException(404, "unknown preference") from exc
+        except (PreferenceError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.delete("/v1/preferences/{preference_id}", status_code=204)
+    def delete_preference(preference_id: str) -> None:
+        try:
+            service.delete_preference(preference_id)
+        except KeyError as exc:
+            raise HTTPException(404, "unknown preference") from exc
+
+    @app.get("/v1/memory/resolutions")
+    def resolutions():
+        with service.lock:
+            return tuple(service.resolutions)
+
+    @app.get("/v1/memory/suggestions")
+    def suggestions():
+        """Derived from past choices. Promote one explicitly to make it policy."""
+        return service.suggestions()
 
     @app.get("/v1/permissions")
     def permissions():

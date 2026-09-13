@@ -8,8 +8,6 @@ from cascade.domain.models import Incident, Record, World
 from cascade.planning.models import Resolution, SearchPolicy, SkillRef
 
 SKILL_DIRECTORY = "data/skills"
-# Preservation is always available: it is the base case, not a provider operator.
-SELECTABLE: tuple[Resolution, ...] = ("RESCHEDULED", "SUBSTITUTED", "COMPENSATED", "ABANDONED")
 
 
 class SkillTrigger(Record):

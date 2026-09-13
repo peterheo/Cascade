@@ -14,6 +14,13 @@ from cascade.domain.models import (
 from cascade.execution.executor import PlanExecutor
 from cascade.execution.models import ExecutionResult
 from cascade.graph.traversal import descendants
+from cascade.memory.preferences import Preference, PreferenceError, narrow, promote
+from cascade.memory.resolutions import (
+    ResolutionRecord,
+    record_dismissal,
+    record_execution,
+    suggest,
+)
 from cascade.planning.demo import demo_planner
 from cascade.planning.models import CandidatePlan, PlanningResult, SearchPolicy
 from cascade.planning.planner import RecoveryPlanner
@@ -52,6 +59,9 @@ class CascadeService:
         self.executor = PlanExecutor(self.gateway)
         self.permissions = permissions or PermissionPolicy()
         self.skills = load_skills()
+        self.preferences: dict[str, Preference] = {}
+        self.resolutions: list[ResolutionRecord] = []
+        self.searches: dict[str, PlanningResult] = {}
         self.approvals: dict[str, ApprovalRequest] = {}
         self.executions: dict[str, ExecutionResult] = {}
 
@@ -97,6 +107,7 @@ class CascadeService:
                 }
             )
             self._replace_incident(dismissed)
+            self.resolutions.append(record_dismissal(incident_id, incident.severity))
             self.audit.append(
                 {
                     "type": "incident.dismissed",
@@ -106,6 +117,47 @@ class CascadeService:
                 }
             )
             return dismissed
+
+    def add_preference(self, item: Preference) -> Preference:
+        with self.lock:
+            if item.source == "learned" and item.status == "ACTIVE":
+                raise PreferenceError("a learned preference must be promoted, not created active")
+            narrow(SearchPolicy(), (*self.preferences.values(), item), self.world)
+            self.preferences[item.id] = item
+            self.audit.append(
+                {"type": "preference.added", "preference": item.model_dump(mode="json")}
+            )
+            return item
+
+    def set_preference_status(self, preference_id: str, status: str, actor: str) -> Preference:
+        with self.lock:
+            if preference_id not in self.preferences:
+                raise KeyError(preference_id)
+            updated = promote(self.preferences[preference_id], status, actor)
+            others = tuple(p for p in self.preferences.values() if p.id != preference_id)
+            narrow(SearchPolicy(), (*others, updated), self.world)
+            self.preferences[preference_id] = updated
+            self.audit.append(
+                {
+                    "type": "preference.updated",
+                    "preference_id": preference_id,
+                    "status": status,
+                    "actor": actor,
+                }
+            )
+            return updated
+
+    def delete_preference(self, preference_id: str) -> None:
+        with self.lock:
+            if preference_id not in self.preferences:
+                raise KeyError(preference_id)
+            del self.preferences[preference_id]
+            self.audit.append({"type": "preference.deleted", "preference_id": preference_id})
+
+    def suggestions(self) -> tuple[Preference, ...]:
+        """What repeated choices imply. Nothing here is applied until a person says so."""
+        with self.lock:
+            return suggest(tuple(self.resolutions), self.world)
 
     def approve(
         self,
@@ -183,6 +235,9 @@ class CascadeService:
                         )
                     )
             self.executions[result.id] = result
+            if result.status == "COMPLETED" and plan.id in self.searches:
+                severity = self.incident(incident_id).severity if incident_id else None
+                self.resolutions.append(record_execution(self.searches[plan.id], result, severity))
             self.audit.append(
                 {"type": "recovery.executed", "result": result.model_dump(mode="json")}
             )
@@ -217,6 +272,9 @@ class CascadeService:
                 # explicit operator priorities outrank its ordering.
                 policy = skill.policy(SearchPolicy()) if policy is None else policy
                 operator_priorities = operator_priorities or skill.priorities(self.world, incident)
+            # Stored preferences are the highest authority, so they narrow whatever
+            # policy is in effect rather than being overridden by it.
+            policy = narrow(policy or SearchPolicy(), tuple(self.preferences.values()), self.world)
             result = self.planner.plan(
                 self.world,
                 incident,
@@ -225,6 +283,7 @@ class CascadeService:
                 skill.ref if skill else None,
             )
             self.plans.update({p.id: p for p in result.candidates})
+            self.searches.update({p.id: result for p in result.candidates})
             self.plan_incidents[incident.id] = tuple(p.id for p in result.candidates)
             if incident.status == "OPEN":
                 self._replace_incident(incident.model_copy(update={"severity": classify(result)}))

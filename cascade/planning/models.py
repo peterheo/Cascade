@@ -6,6 +6,13 @@ from pydantic import AwareDatetime, Field, model_validator
 from cascade.domain.models import Assessment, Commitment, Deadline, Record, World
 
 Resolution = Literal["PRESERVED", "RESCHEDULED", "SUBSTITUTED", "COMPENSATED", "ABANDONED"]
+# Preservation is the base case the planner constructs itself, never a provider operator.
+SELECTABLE_RESOLUTIONS: tuple[Resolution, ...] = (
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED",
+    "ABANDONED",
+)
 
 
 class RecoveryOption(Record):
@@ -83,12 +90,7 @@ class SearchPolicy(Record):
     # These are explicit demo defaults, exposed to callers rather than inferred.
     required_intent_ids: tuple[str, ...] = ("intent_transfer", "intent_hotel")
     # Preservation is the base case and is always available, so it is never listed here.
-    allowed_resolutions: tuple[Resolution, ...] = (
-        "RESCHEDULED",
-        "SUBSTITUTED",
-        "COMPENSATED",
-        "ABANDONED",
-    )
+    allowed_resolutions: tuple[Resolution, ...] = SELECTABLE_RESOLUTIONS
 
     @model_validator(mode="after")
     def preservation_is_not_an_operator(self) -> Self:

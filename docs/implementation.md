@@ -231,3 +231,30 @@ Precedence is explicit. An explicit policy from the caller outranks the template
 limits, and explicit operator priorities — including Nemotron's suggested ordering —
 outrank its ordering. The applied template's name and version are recorded on the
 planning result, so the audit trail shows which template bounded a given search.
+
+## Personal memory and preference learning
+
+A preference is stored only if it narrows something the deterministic layer already
+reads: a required intent, a spending ceiling, or a forbidden operator. Anything that
+cannot be projected onto the policy would be decoration, so the schema rejects it — a
+non-numeric spending limit, or an attempt to forbid preservation, which is the base case
+rather than an operator.
+
+Preferences narrow rather than replace. They add required intents, lower the ceiling to
+the minimum of the two, and remove operators, so they are the highest authority without
+ever widening a caller's explicit limits. A set that would forbid every operator is
+refused at the point it is stored, not discovered at plan time.
+
+Learned preferences are never policy by default. They are created SUGGESTED, carry the
+resolution IDs they were derived from, and can only become ACTIVE through a person — the
+service refuses a promotion from any other actor, and refuses a learned preference
+created active at all. Promotion keeps the provenance: source stays `learned`, with its
+confidence and evidence count intact.
+
+Learning reads revealed choices, not stated ones. A pair (kept, given up) counts only
+when a rejected candidate would have reversed it — keeping an intent nothing threatened
+says nothing about what a user values. Confidence is the agreement ratio recomputed from
+the whole record each time rather than decayed on a timer, so a reversed choice lowers it
+immediately instead of ageing out, and a suggestion needs at least three observations and
+70% agreement before it is worth showing. Every resolution is retained, dismissals
+included: declining recovery is an outcome, not the absence of one.

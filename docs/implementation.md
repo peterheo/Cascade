@@ -102,3 +102,49 @@ documented in [nebius.md](nebius.md).
 API testing follows the [FastAPI testing guide](https://fastapi.tiangolo.com/tutorial/testing/).
 Models use [Pydantic validation](https://docs.pydantic.dev/latest/concepts/validators/)
 to reject invalid intervals, unknown references, and unexpected fields.
+
+## Phase 5 — approval, execution, and verification
+
+`cascade/tools/permissions.py` assigns the design's risk tier from the operation and
+the committed amount. A tier is never model-assigned and never caller-supplied:
+`ToolAction` recomputes both its read/write mode and its tier and rejects any value
+that disagrees, so an API caller cannot present a purchase as a tier-1 draft.
+
+`cascade/tools/gateway.py` is the only path to an external effect. It authorizes in a
+fixed order — product policy, adapter availability, sandbox boundary, then approval —
+so a user is never asked to approve an action the boundary would refuse anyway. Writes
+are followed by an independent read: `apply` reports what it did, `verify` reads the
+provider's own record back, and the call is successful only when the observed state
+matches the action's postcondition. An adapter exception becomes unknown state, never
+success and never proof of unavailability.
+
+`cascade/tools/adapters/booking.py` mutates the same fixture inventory the planner
+searched. Writes are keyed by an idempotency key, so a retry reuses the existing
+confirmation instead of double-booking. Withdrawn inventory and write failures are
+explicit switches for the demo and evals rather than random faults.
+
+`cascade/security/openshell.py` is a deny-by-default capability profile: allowed
+providers, operations, endpoints, and a spend ceiling, with every denial retained in
+a log the API exposes. Enforcement is in-process, so it constrains Cascade's own
+executor rather than the operating system; the `ExecutionSandbox` protocol is the seam
+a real OpenShell runner plugs into. The sandbox ceiling is independent of user
+approval: an approved action can still be refused by the boundary.
+
+`cascade/security/approvals.py` requires informed consent. A grant must name every
+requested action and echo the exact total; a partial list or a mismatched amount is
+rejected. Approvals are bound to a plan and to the world version they were built on.
+
+`cascade/execution/executor.py` authorizes every write before performing any of them,
+so a plan is never half-authorized. Each step then re-checks live availability, writes,
+verifies, applies the option to the world, bumps the version, and re-evaluates. A
+failure stops the run: confirmed side effects stay committed as authoritative state and
+the result is PARTIAL with `replan_required`, because the remainder of a plan is not
+assumed to still hold. COMPLETED additionally requires that the resulting world equals
+the planned world and carries no hard violation; the model validator enforces that a
+completed execution cannot be reported without verification.
+
+Incidents now close. `severity` is assigned from what search actually found — GREEN for
+a cost-free same-provider recovery, YELLOW when every intent survives with degradation,
+RED when no feasible plan keeps every intent, BLACK when nothing feasible was found —
+and incidents resolve when their violations disappear, whatever removed them, or when a
+user dismisses them explicitly.

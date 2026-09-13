@@ -6,8 +6,8 @@ Cascade models personal commitments as a dependency graph. When a flight changes
 deterministic code identifies downstream timing failures before an AI proposes recovery.
 
 This repository implements **Phase 1 — deterministic core**, **Phase 2 — recovery search**,
-and the **Phase 3 — Nemotron integration** of the supplied
-[architecture specification](docs/architecture.md). It is a local, single-user demo,
+**Phase 3 — Nemotron integration**, and **Phase 5 — approval, execution and
+verification** of the supplied [architecture specification](docs/architecture.md). It is a local, single-user demo,
 with synthetic data and in-memory state that resets on restart.
 
 Phase 3 live extraction, strategy generation, and comparison have been verified
@@ -24,6 +24,7 @@ uv run cascade-demo
 uv run cascade-demo --json
 uv run cascade-demo --plan
 uv run cascade-demo --plan --json
+uv run cascade-demo --execute
 ```
 
 The seeded itinerary has five commitments: flight → transfer → hotel → dinner → movie.
@@ -60,6 +61,22 @@ low-confidence inputs return 409; invalid data returns 422. The confidence thres
 is a demo admission rule, not authentication or authorization. Bind locally and use
 one worker: storage and deduplication are process-local.
 
+Executing a plan is a separate, two-step decision:
+
+```sh
+curl -X POST http://127.0.0.1:8000/v1/recovery-plans/$PLAN/execute \
+  -H 'Content-Type: application/json' -d '{"expected_version": 1}'
+curl -X POST http://127.0.0.1:8000/v1/approvals/$REQUEST/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"approved_action_ids": [...], "acknowledged_amount": "205"}'
+```
+
+The first call returns `AWAITING_APPROVAL` with the exact actions, risk tiers and total;
+nothing external has happened. Approval must name every action and echo the exact
+amount. The second execute call then runs each action through the gateway, verifies it
+against the provider record, and re-evaluates the world. `GET /v1/security/sandbox`
+shows the capability profile and every denied action.
+
 `POST /v1/incidents/{id}/replan` reruns against the requested current version.
 `GET /v1/recovery-plans/{id}` returns a saved candidate and marks it stale after a
 world change. Planning appends audit evidence while leaving commitments untouched.
@@ -83,6 +100,13 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
 - Nebius structured-output client with bounded retries, timeouts, and model routing.
 - Natural-language extraction, preview/confirmation, and stale-state protection.
 - Model-suggested recovery priorities and advisory comparisons of feasible plans.
+- Derived risk tiers, a typed tool gateway, and mutating fixture adapters with
+  idempotency keys.
+- Deny-by-default capability sandbox with a visible denial log.
+- Informed approval: every action named, the exact total acknowledged.
+- Step-by-step execution with pre-checks, postcondition verification, partial-execution
+  commits, and mandatory replanning after any failure.
+- Deterministic incident severity, incident resolution, and explicit dismissal.
 
 Projected times are feasibility evidence, **not changed reservations or verified
 availability**. Soft constraints are assessed without shifting downstream commitments.
@@ -102,20 +126,23 @@ delay thresholds, timezone equivalence, hard/soft constraints, cycle/reference
 validation, atomic rejection, event replay, API errors, and application isolation.
 Recovery tests additionally cover budgets, provider outages versus known empty
 inventory, expired quotes, immutable user rules, conservative travel through skipped
-activities, compensation, and globally feasible tradeoffs.
+activities, compensation, and globally feasible tradeoffs. Execution tests cover the
+approval gate, uninformed and partial approvals, policy and sandbox denial, withdrawn
+inventory, unverifiable writes, adapter outages, double-booking, partial execution and
+the replan that follows it, forged risk tiers, and the full approve-execute-verify API.
 
 ## Next milestones
 
-1. Next.js graph and recovery comparison UI, approvals, execution, and verification (Phase 4).
-2. PostgreSQL persistence and incident lifecycle reconciliation; historical incidents
-   currently remain open even if a later event improves the world.
-3. Real connectors, OpenShell boundary, and the broader scenario evaluation suite.
+1. Next.js graph, recovery comparison, approval and audit UI (Phase 4).
+2. PostgreSQL persistence and durable audit storage.
+3. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
 
-Resource conflicts, general user policy, recovery severity classification, provider
-execution, authentication, and persistent audit storage are not implemented yet.
-`AWAITING_APPROVAL` is a candidate status; the execution/authorization layer is a
-later milestone. Fixture quality values are explicit demo assumptions, not learned
-preferences. Search completeness refers only to the queried inventory and operators.
+Resource conflicts, general user policy, authentication, and persistent audit storage
+are not implemented yet. Execution mutates fixture provider ledgers in this process;
+no real booking, refund or message is ever sent. The sandbox is enforced in-process,
+so it constrains Cascade's executor rather than the operating system. Fixture quality
+values are explicit demo assumptions, not learned preferences. Search completeness
+refers only to the queried inventory and operators.
 
 Package layout follows the design's domain/graph/constraints split. `cascade/service.py`
 is the temporary in-memory orchestration boundary; `apps/api` is the HTTP adapter.

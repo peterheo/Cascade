@@ -1,10 +1,26 @@
+from datetime import UTC, datetime
+from decimal import Decimal
 from threading import RLock
 
 from cascade.constraints.engine import evaluate
-from cascade.domain.models import Commitment, EventResult, Incident, Mutation, World
+from cascade.domain.models import (
+    Assessment,
+    Commitment,
+    EventResult,
+    Incident,
+    Mutation,
+    World,
+)
+from cascade.execution.executor import PlanExecutor
+from cascade.execution.models import ExecutionResult
 from cascade.graph.traversal import descendants
 from cascade.planning.demo import demo_planner
 from cascade.planning.models import CandidatePlan, PlanningResult, SearchPolicy
+from cascade.planning.severity import classify
+from cascade.security.approvals import ApprovalRequest, grant, reject
+from cascade.tools.demo import demo_gateway
+from cascade.tools.gateway import ExecutionContext, ToolGateway
+from cascade.tools.permissions import PermissionPolicy
 
 
 class ConflictError(ValueError):
@@ -14,7 +30,12 @@ class ConflictError(ValueError):
 class CascadeService:
     """Single-process repository, event transaction boundary, and read-only planning."""
 
-    def __init__(self, world: World):
+    def __init__(
+        self,
+        world: World,
+        gateway: ToolGateway | None = None,
+        permissions: PermissionPolicy | None = None,
+    ):
         evaluate(world)
         self.world = world
         self.events: dict[str, tuple[Mutation, EventResult]] = {}
@@ -22,6 +43,145 @@ class CascadeService:
         self.audit: list[dict] = []
         self.lock = RLock()
         self.plans: dict[str, CandidatePlan] = {}
+        self.plan_incidents: dict[str, tuple[str, ...]] = {}
+        self.gateway = gateway or demo_gateway()
+        self.executor = PlanExecutor(self.gateway)
+        self.permissions = permissions or PermissionPolicy()
+        self.approvals: dict[str, ApprovalRequest] = {}
+        self.executions: dict[str, ExecutionResult] = {}
+
+    def incident(self, incident_id: str) -> Incident:
+        with self.lock:
+            for item in self.incidents:
+                if item.id == incident_id:
+                    return item
+        raise KeyError(incident_id)
+
+    def _replace_incident(self, incident: Incident) -> None:
+        self.incidents = [incident if i.id == incident.id else i for i in self.incidents]
+
+    def _reconcile(self, assessment: Assessment) -> None:
+        """Close incidents whose violations no longer exist, whatever resolved them."""
+        active = {v.constraint_id for v in assessment.violations}
+        for incident in list(self.incidents):
+            if incident.status != "OPEN":
+                continue
+            if not any(v.constraint_id in active for v in incident.violations):
+                self._replace_incident(
+                    incident.model_copy(
+                        update={
+                            "status": "RESOLVED",
+                            "resolved_at": datetime.now(UTC),
+                            "resolution_note": "No violation from this incident remains in state.",
+                        }
+                    )
+                )
+                self.audit.append({"type": "incident.resolved", "incident_id": incident.id})
+
+    def dismiss(self, incident_id: str, actor: str, note: str) -> Incident:
+        """The user can decline recovery; that is an explicit outcome, not a failure."""
+        with self.lock:
+            incident = self.incident(incident_id)
+            if incident.status != "OPEN":
+                raise ConflictError("this incident is already closed")
+            dismissed = incident.model_copy(
+                update={
+                    "status": "DISMISSED",
+                    "resolved_at": datetime.now(UTC),
+                    "resolution_note": note,
+                }
+            )
+            self._replace_incident(dismissed)
+            self.audit.append(
+                {
+                    "type": "incident.dismissed",
+                    "incident_id": incident_id,
+                    "actor": actor,
+                    "note": note,
+                }
+            )
+            return dismissed
+
+    def approve(
+        self,
+        request_id: str,
+        actor: str,
+        approved_action_ids: tuple[str, ...],
+        acknowledged_amount: Decimal,
+    ) -> ApprovalRequest:
+        with self.lock:
+            if request_id not in self.approvals:
+                raise KeyError(request_id)
+            request = self.approvals[request_id]
+            if request.based_on_version != self.world.version:
+                raise ConflictError("the world changed; request approval against current state")
+            decided = grant(request, actor, approved_action_ids, acknowledged_amount)
+            self.approvals[request_id] = decided
+            self.audit.append(
+                {"type": "approval.granted", "approval": decided.model_dump(mode="json")}
+            )
+            return decided
+
+    def reject(self, request_id: str, actor: str, note: str) -> ApprovalRequest:
+        with self.lock:
+            if request_id not in self.approvals:
+                raise KeyError(request_id)
+            decided = reject(self.approvals[request_id], actor, note)
+            self.approvals[request_id] = decided
+            self.audit.append(
+                {"type": "approval.rejected", "approval": decided.model_dump(mode="json")}
+            )
+            return decided
+
+    def execute(self, plan_id: str, expected_version: int, actor: str) -> ExecutionResult:
+        """Run one approved plan. Side effects commit step by step, never in bulk."""
+        with self.lock:
+            if plan_id not in self.plans:
+                raise KeyError(plan_id)
+            if expected_version != self.world.version:
+                raise ConflictError("stale world version; fetch state before executing")
+            plan = self.plans[plan_id]
+            incident_id = next(
+                (i.id for i in self.incidents if plan.id in self.plan_incidents.get(i.id, ())),
+                "",
+            )
+            context = ExecutionContext(
+                plan_id=plan.id,
+                world_version=self.world.version,
+                actor=actor,
+                policy=self.permissions,
+            )
+            result = self.executor.execute(
+                self.world,
+                plan,
+                incident_id,
+                context,
+                tuple(self.approvals.values()),
+            )
+            if result.approval_request is not None:
+                self.approvals[result.approval_request.id] = result.approval_request
+            if result.world.version != self.world.version:
+                self.world = result.world
+                self._reconcile(evaluate(self.world))
+            if result.status == "COMPLETED" and incident_id:
+                incident = self.incident(incident_id)
+                if incident.status == "OPEN":
+                    self._replace_incident(
+                        incident.model_copy(
+                            update={
+                                "status": "RESOLVED",
+                                "resolved_at": datetime.now(UTC),
+                                "resolution_note": (
+                                    f"Recovery plan {plan.id} executed and verified."
+                                ),
+                            }
+                        )
+                    )
+            self.executions[result.id] = result
+            self.audit.append(
+                {"type": "recovery.executed", "result": result.model_dump(mode="json")}
+            )
+            return result
 
     def plan(
         self,
@@ -38,6 +198,9 @@ class CascadeService:
                 raise KeyError(incident_id)
             result = demo_planner().plan(self.world, incident, policy, operator_priorities)
             self.plans.update({p.id: p for p in result.candidates})
+            self.plan_incidents[incident.id] = tuple(p.id for p in result.candidates)
+            if incident.status == "OPEN":
+                self._replace_incident(incident.model_copy(update={"severity": classify(result)}))
             self.audit.append(
                 {"type": "recovery.planned", "result": result.model_dump(mode="json")}
             )

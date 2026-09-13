@@ -50,10 +50,9 @@ interactive API. The UI walks the whole demo: paste the airline message and let 
 turn it into a typed change you confirm (or use the deterministic simulator when no key
 is configured), watch the blast radius light up the dependency graph, compare the
 feasible alternatives and their tradeoffs, approve the exact actions and total, then
-watch each action execute and verify. It is
-plain HTML, CSS and ES modules served by the API — no build step, no bundler, no network
-dependency. (`apps/web` is the untouched starter scaffold and is not part of the running
-system.)
+watch each action execute and verify. It is plain HTML, CSS and ES modules served by the
+API — no build step, no bundler, no network dependency. (`apps/web` is the untouched
+starter scaffold and is not part of the running system.)
 
 Inject the demo from the command line instead:
 
@@ -187,9 +186,9 @@ UI tests assert that every endpoint the page calls exists on the API.
 2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
 3. A preference and memory surface in the UI for what the API already exposes.
 
-Resource conflicts, authentication, and persistent audit storage are not implemented
-yet. Execution mutates fixture provider ledgers in this process;
-no real booking, refund or message is ever sent. The sandbox is enforced in-process,
+Resource conflicts, authentication, and persistent storage are not implemented yet.
+Execution mutates fixture provider ledgers in this process; no real booking, refund or
+message is ever sent. The sandbox is enforced in-process,
 so it constrains Cascade's executor rather than the operating system. Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness
 refers only to the queried inventory and operators.

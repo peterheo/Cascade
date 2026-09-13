@@ -1,0 +1,126 @@
+{
+  "id": "flight_delay_black",
+  "date": "2026-09-11",
+  "providers": {
+    "transfer": {
+      "exhausted": {
+        "RESCHEDULE": "Original transfer has no later pickup in the search window."
+      },
+      "options": [
+        {
+          "id": "taxi",
+          "resolution": "SUBSTITUTED",
+          "replacement": {
+            "title": "Taxi from airport (fixture)",
+            "start_at": "2026-09-11T19:40:00+02:00",
+            "end_at": "2026-09-11T20:25:00+02:00"
+          },
+          "additional_cost": "65",
+          "intent_quality": 1,
+          "explanation": "Taxi from airport (fixture)"
+        }
+      ]
+    },
+    "hotel": {
+      "exhausted": {
+        "PRESERVE": "Original hotel has a hard 18:30 cutoff.",
+        "RESCHEDULE": "Original hotel does not offer late check-in."
+      },
+      "options": [
+        {
+          "id": "late_hotel",
+          "resolution": "SUBSTITUTED",
+          "replacement": {
+            "title": "Alternate hotel with late check-in (fixture)",
+            "start_at": "2026-09-11T20:55:00+02:00",
+            "end_at": "2026-09-11T21:15:00+02:00"
+          },
+          "additional_cost": "140",
+          "intent_quality": 1,
+          "explanation": "Alternate hotel with late check-in (fixture)",
+          "replaced_deadline_ids": [
+            "hotel_cutoff"
+          ],
+          "replacement_deadlines": [
+            {
+              "id": "late_hotel_cutoff",
+              "commitment_id": "hotel",
+              "latest_start": "2026-09-11T23:59:00+02:00",
+              "explanation": "Alternate hotel accepts check-in until 23:59.",
+              "source": {
+                "source": "mock_provider",
+                "external_id": "late_hotel_policy"
+              }
+            }
+          ],
+          "loss": "120"
+        }
+      ]
+    },
+    "restaurant": {
+      "exhausted": {
+        "RESCHEDULE": "Original restaurant has no availability for three weeks."
+      },
+      "options": [
+        {
+          "id": "special_dinner",
+          "resolution": "SUBSTITUTED",
+          "replacement": {
+            "title": "Special dinner at another restaurant (fixture)",
+            "start_at": "2026-09-11T21:45:00+02:00",
+            "end_at": "2026-09-11T23:00:00+02:00"
+          },
+          "additional_cost": "95",
+          "intent_quality": 1,
+          "explanation": "Special dinner at another restaurant (fixture)"
+        },
+        {
+          "id": "simple_dinner",
+          "resolution": "SUBSTITUTED",
+          "replacement": {
+            "title": "Quick neighborhood dinner (fixture)",
+            "start_at": "2026-09-11T21:45:00+02:00",
+            "end_at": "2026-09-11T22:15:00+02:00"
+          },
+          "additional_cost": "25",
+          "intent_quality": 0.55,
+          "explanation": "Quick neighborhood dinner (fixture)"
+        },
+        {
+          "id": "dinner_waiver",
+          "resolution": "COMPENSATED",
+          "intent_quality": 0,
+          "refund": "30",
+          "explanation": "Skip dinner; fixture provider offers a 30 EUR deposit refund."
+        }
+      ]
+    },
+    "ticket": {
+      "exhausted": {
+        "RESCHEDULE": "Later screening at the original cinema is sold out."
+      },
+      "options": [
+        {
+          "id": "alternate_cinema",
+          "resolution": "SUBSTITUTED",
+          "replacement": {
+            "title": "23:00 screening at another cinema (fixture)",
+            "start_at": "2026-09-11T23:00:00+02:00",
+            "end_at": "2026-09-11T23:59:00+02:00"
+          },
+          "additional_cost": "15",
+          "intent_quality": 1,
+          "explanation": "23:00 screening at another cinema (fixture)",
+          "loss": "20"
+        },
+        {
+          "id": "skip_movie",
+          "resolution": "ABANDONED",
+          "intent_quality": 0,
+          "loss": "20",
+          "explanation": "Skip the movie; original ticket is non-refundable."
+        }
+      ]
+    }
+  }
+}

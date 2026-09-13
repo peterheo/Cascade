@@ -175,3 +175,26 @@ A green report only means something if the harness can go red, so scenario setup
 inside the per-scenario guard — a malformed scenario fails itself rather than the run —
 and the tests assert that a deliberately wrong expectation and a broken scenario both
 come back as failures.
+
+## Phase 4 — product surface
+
+The UI is plain HTML, CSS and ES modules under `apps/api/static`, served by the API
+itself at `/`. This is a deliberate deviation from the design's Next.js/React Flow
+recommendation. The demo is a single-process local system; a separate build, dev server
+and proxy would add two failure modes and a toolchain to every run without changing what
+the product has to show. `apps/web` is the untouched starter scaffold that came with the
+repository and is not part of the running system.
+
+One page carries the five surfaces the design calls for: the stable-state dashboard, the
+incident view with the blast radius on the dependency graph, the recovery comparison, the
+approval gate, and the audit and boundary trail. The graph lays commitments out by
+longest-path depth, so it renders any DAG rather than the demo's chain, and it stops
+colouring the blast radius once the incident closes.
+
+The UI holds no authority of its own. It reads the world version from the server and
+echoes it back on every write, it sends back the approval's own action IDs and total
+rather than recomputing them, and it renders each commitment's own wall clock instead of
+converting to the viewer's timezone — the constraint engine reasoned about the
+itinerary's local times, and a converted display would misreport them. Tests assert that
+every `/v1` path the script calls exists on the API, so the two cannot drift apart
+silently.

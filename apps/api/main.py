@@ -1,7 +1,9 @@
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 
 from cascade.constraints.engine import evaluate
@@ -13,6 +15,8 @@ from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningPr
 from cascade.reasoning.service import SemanticService
 from cascade.security.approvals import ApprovalError
 from cascade.service import CascadeService, ConflictError
+
+STATIC = Path(__file__).parent / "static"
 
 
 class PlanRequest(Record):
@@ -108,6 +112,13 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             raise
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        """The product surface is served by the API itself; there is no build step."""
+        return FileResponse(STATIC / "index.html")
 
     @app.get("/health")
     def health():

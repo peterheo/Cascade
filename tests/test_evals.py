@@ -27,11 +27,8 @@ def test_the_suite_covers_every_metric(report):
     assert metrics.recovery_feasibility == 1
     assert metrics.unauthorized_mutations_blocked == 1
     assert metrics.graceful_degradation == 1
-    assert all(
-        value is not None
-        for name, value in metrics
-        if name not in ("scenarios", "passed")
-    )
+    counters = ("scenarios", "passed")
+    assert all(value is not None for name, value in metrics if name not in counters)
 
 
 def test_the_suite_exercises_each_category():

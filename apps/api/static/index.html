@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cascade</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true"></span>
+        <div>
+          <h1>Cascade</h1>
+          <p>One thing changed. Cascade handles the rest.</p>
+        </div>
+      </div>
+      <div class="bar-actions">
+        <span id="version" class="pill">version —</span>
+        <button id="inject" class="button primary">Simulate flight delay</button>
+        <button id="reset-hint" class="button ghost" type="button" title="State is in memory">
+          Restart the API to reset
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section id="summary" class="panel">
+        <h2 class="visually-hidden">State</h2>
+        <div id="summary-body" class="summary"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Dependency graph</h2>
+          <p id="graph-caption">Every edge is an explicit constraint with its own provenance.</p>
+        </div>
+        <div class="graph-wrap"><svg id="graph" role="img" aria-label="Dependency graph"></svg></div>
+        <ul class="legend">
+          <li><span class="dot dot-ok"></span>Feasible</li>
+          <li><span class="dot dot-trigger"></span>Changed</li>
+          <li><span class="dot dot-affected"></span>Downstream</li>
+          <li><span class="dot dot-broken"></span>Hard conflict</li>
+        </ul>
+      </section>
+
+      <section id="incident" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Incident</h2>
+          <p id="incident-caption"></p>
+        </div>
+        <div id="incident-body"></div>
+      </section>
+
+      <section id="plans" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Feasible alternatives</h2>
+          <p>
+            Every option below passes the constraint engine. None of them keeps everything,
+            so the tradeoff is yours.
+          </p>
+        </div>
+        <div id="plans-body" class="plans"></div>
+      </section>
+
+      <section id="approval" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Approval</h2>
+          <p>Nothing external has happened yet. These are the exact actions and the exact total.</p>
+        </div>
+        <div id="approval-body"></div>
+      </section>
+
+      <section id="execution" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Execution</h2>
+          <p>Each step re-checks availability, writes, and is verified against the provider record.</p>
+        </div>
+        <div id="execution-body"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Audit &amp; boundary</h2>
+          <p>Why it was proposed, what was checked, who approved it, and what was denied.</p>
+        </div>
+        <div id="sandbox-body" class="sandbox"></div>
+        <ol id="audit-body" class="audit"></ol>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

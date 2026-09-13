@@ -6,8 +6,8 @@ Cascade models personal commitments as a dependency graph. When a flight changes
 deterministic code identifies downstream timing failures before an AI proposes recovery.
 
 This repository implements **Phase 1 — deterministic core**, **Phase 2 — recovery search**,
-**Phase 3 — Nemotron integration**, **Phase 5 — approval, execution and verification**,
-and **Phase 6 — evaluation** of the supplied
+**Phase 3 — Nemotron integration**, **Phase 4 — product surface**, **Phase 5 — approval,
+execution and verification**, and **Phase 6 — evaluation** of the supplied
 [architecture specification](docs/architecture.md). It is a local, single-user demo,
 with synthetic data and in-memory state that resets on restart.
 
@@ -45,7 +45,15 @@ the full deterministic constraint engine; no bookings or refunds are executed.
 uv run uvicorn apps.api.main:app --reload --host 127.0.0.1
 ```
 
-Open <http://127.0.0.1:8000/docs> for the interactive API. Inject the demo:
+Open <http://127.0.0.1:8000/> for the Cascade UI and <http://127.0.0.1:8000/docs> for the
+interactive API. The UI walks the whole demo: simulate the delay, watch the blast radius
+light up the dependency graph, compare the feasible alternatives and their tradeoffs,
+approve the exact actions and total, then watch each action execute and verify. It is
+plain HTML, CSS and ES modules served by the API — no build step, no bundler, no network
+dependency. (`apps/web` is the untouched starter scaffold and is not part of the running
+system.)
+
+Inject the demo from the command line instead:
 
 ```sh
 curl -X POST http://127.0.0.1:8000/v1/demo/scenarios/flight_delay/inject
@@ -110,6 +118,8 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
 - Deterministic incident severity, incident resolution, and explicit dismissal.
 - A declarative 26-scenario evaluation suite with reproducible fault injection and
   precision/recall, feasibility, security and degradation metrics.
+- A zero-build product surface: stable dashboard, blast-radius graph, tradeoff
+  comparison, approval gate, and audit/boundary trail.
 
 Projected times are feasibility evidence, **not changed reservations or verified
 availability**. Soft constraints are assessed without shifting downstream commitments.
@@ -149,12 +159,14 @@ activities, compensation, and globally feasible tradeoffs. Execution tests cover
 approval gate, uninformed and partial approvals, policy and sandbox denial, withdrawn
 inventory, unverifiable writes, adapter outages, double-booking, partial execution and
 the replan that follows it, forged risk tiers, and the full approve-execute-verify API.
+UI tests assert that every endpoint the page calls exists on the API.
 
 ## Next milestones
 
-1. Next.js graph, recovery comparison, approval and audit UI (Phase 4).
-2. PostgreSQL persistence and durable audit storage.
-3. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
+1. PostgreSQL persistence and durable audit storage.
+2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
+3. Live streaming (`GET /v1/stream`) so the UI updates without a refresh, and preference
+   learning from resolution history.
 
 Resource conflicts, general user policy, authentication, and persistent audit storage
 are not implemented yet. Execution mutates fixture provider ledgers in this process;

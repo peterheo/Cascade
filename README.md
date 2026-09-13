@@ -46,9 +46,11 @@ uv run uvicorn apps.api.main:app --reload --host 127.0.0.1
 ```
 
 Open <http://127.0.0.1:8000/> for the Cascade UI and <http://127.0.0.1:8000/docs> for the
-interactive API. The UI walks the whole demo: simulate the delay, watch the blast radius
-light up the dependency graph, compare the feasible alternatives and their tradeoffs,
-approve the exact actions and total, then watch each action execute and verify. It is
+interactive API. The UI walks the whole demo: paste the airline message and let Nemotron
+turn it into a typed change you confirm (or use the deterministic simulator when no key
+is configured), watch the blast radius light up the dependency graph, compare the
+feasible alternatives and their tradeoffs, approve the exact actions and total, then
+watch each action execute and verify. It is
 plain HTML, CSS and ES modules served by the API — no build step, no bundler, no network
 dependency. (`apps/web` is the untouched starter scaffold and is not part of the running
 system.)
@@ -118,8 +120,8 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
 - Deterministic incident severity, incident resolution, and explicit dismissal.
 - A declarative 26-scenario evaluation suite with reproducible fault injection and
   precision/recall, feasibility, security and degradation metrics.
-- A zero-build product surface: stable dashboard, blast-radius graph, tradeoff
-  comparison, approval gate, and audit/boundary trail.
+- A zero-build product surface: disruption inbox, stable dashboard, blast-radius graph,
+  tradeoff comparison, approval gate, and audit/boundary trail.
 
 Projected times are feasibility evidence, **not changed reservations or verified
 availability**. Soft constraints are assessed without shifting downstream commitments.

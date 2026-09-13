@@ -191,6 +191,13 @@ approval gate, and the audit and boundary trail. The graph lays commitments out 
 longest-path depth, so it renders any DAG rather than the demo's chain, and it stops
 colouring the blast radius once the incident closes.
 
+The disruption inbox completes the chain the design's success criteria describe: a
+message arrives in natural language, Nemotron returns a typed change with an exact source
+quote and a confidence, and the change reaches state only when the user confirms it. The
+preview never carries `apply`, so the server's default keeps it a proposal. When no key is
+configured the endpoint answers 503 and the page says so and keeps the deterministic
+simulator available, because a missing model must not block the deterministic path.
+
 The UI holds no authority of its own. It reads the world version from the server and
 echoes it back on every write, it sends back the approval's own action IDs and total
 rather than recomputing them, and it renders each commitment's own wall clock instead of

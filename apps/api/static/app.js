@@ -8,6 +8,7 @@ const state = {
   selected: null,
   approval: null,
   execution: null,
+  extraction: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -420,6 +421,73 @@ function renderExecution() {
   }
 }
 
+function renderExtraction() {
+  const body = el("extraction-body");
+  body.replaceChildren();
+  const result = state.extraction;
+  if (!result) return;
+  const change = result.extraction;
+  const tone =
+    result.status === "APPLIED" ? "ok" : result.status === "UNSUPPORTED" ? "bad" : "wait";
+  const row = text("div", `row ${tone}`);
+  const left = text("div");
+  left.append(
+    text("strong", null, `${result.status} · ${change.outcome}`),
+    text("small", null, change.explanation),
+  );
+  if (result.mutation) {
+    const applied = result.event_result;
+    left.append(
+      text(
+        "small",
+        null,
+        `${result.mutation.commitment_id} → ${time(result.mutation.new_start_at)}, ` +
+          (applied
+            ? `applied at world version ${applied.world_version}`
+            : `proposed against world version ${result.based_on_version}`),
+      ),
+    );
+  }
+  row.append(left, text("span", "tier", `confidence ${change.confidence}`));
+  body.append(row);
+
+  if (change.evidence_quote) {
+    body.append(text("p", "quote", `“${change.evidence_quote}”`));
+  }
+  const call = result.model_call;
+  body.append(
+    text(
+      "div",
+      "trace",
+      `${call.provider} · ${call.model} · ${call.attempts} attempt(s) · ${call.elapsed_ms} ms · ` +
+        `output ${call.output_hash.slice(0, 12)}…`,
+    ),
+  );
+
+  if (result.mutation && result.status !== "APPLIED") {
+    const confirm = text("div", "total");
+    const button = text("button", "button primary", "Apply this change");
+    button.addEventListener("click", () => confirmExtraction(button));
+    confirm.append(
+      text("small", null, "The model proposed it. Applying it is your decision."),
+      button,
+    );
+    body.append(confirm);
+  }
+}
+
+async function renderReasoningStatus() {
+  const pill = el("reasoning-status");
+  try {
+    const status = await call("/v1/reasoning/status");
+    pill.textContent = status.configured
+      ? `${status.model} ${status.live_verified ? "· live verified" : "· configured"}`
+      : "Nemotron not configured — set NEBIUS_API_KEY";
+  } catch {
+    pill.textContent = "reasoning status unavailable";
+  }
+}
+
 async function renderAudit() {
   const [audit, sandbox] = await Promise.all([call("/v1/audit"), call("/v1/security/sandbox")]);
   const list = el("audit-body");
@@ -468,6 +536,7 @@ async function refresh() {
   renderPlans();
   renderApproval();
   renderExecution();
+  renderExtraction();
   await renderAudit();
 }
 
@@ -559,5 +628,41 @@ async function rejectApproval(button) {
   });
 }
 
+async function readMessage(button) {
+  await guard(button, async () => {
+    try {
+      state.extraction = await call("/v1/events/text", {
+        method: "POST",
+        body: JSON.stringify({
+          event_id: `ui_${Date.now()}`,
+          expected_version: state.world.version,
+          text: el("event-text").value,
+        }),
+      });
+    } catch (error) {
+      state.extraction = null;
+      // A missing or failing model never blocks the deterministic path.
+      toast(`${error.message} The deterministic simulator still works.`);
+    }
+    await refresh();
+  });
+}
+
+async function confirmExtraction(button) {
+  await guard(button, async () => {
+    state.extraction = await call(`/v1/extractions/${state.extraction.id}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ expected_version: state.extraction.based_on_version }),
+    });
+    state.planning = null;
+    state.selected = null;
+    state.approval = null;
+    state.execution = null;
+    await refresh();
+  });
+}
+
 el("inject").addEventListener("click", (event) => inject(event.currentTarget));
+el("read-message").addEventListener("click", (event) => readMessage(event.currentTarget));
+renderReasoningStatus();
 refresh().catch((error) => toast(error.message));

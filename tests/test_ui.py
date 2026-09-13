@@ -62,6 +62,19 @@ def test_the_ui_never_calls_a_mutating_endpoint_by_accident(client):
     assert "acknowledged_amount: state.approval.total_amount" in SCRIPT
 
 
+def test_the_natural_language_path_never_applies_without_confirmation():
+    # The preview call omits `apply`, so the server defaults it to false; the change
+    # reaches state only through the separate confirm endpoint.
+    assert "apply: true" not in SCRIPT
+    assert "/v1/events/text" in SCRIPT
+    assert "/confirm" in SCRIPT
+
+
+def test_a_missing_model_does_not_block_the_deterministic_path():
+    assert "The deterministic simulator still works." in SCRIPT
+    assert "/v1/reasoning/status" in SCRIPT
+
+
 def test_the_ui_reads_times_without_rewriting_them():
     # Converting to the viewer's timezone would misreport the itinerary's own clock.
     assert "toLocaleTimeString" not in SCRIPT

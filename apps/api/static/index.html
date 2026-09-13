@@ -25,6 +25,27 @@
     </header>
 
     <main>
+      <section id="inbox" class="panel">
+        <div class="panel-head">
+          <h2>Disruption inbox</h2>
+          <p>
+            Nemotron turns the message into a typed change. Deterministic validation, an
+            exact source quote and your confirmation sit between the model and the state.
+          </p>
+        </div>
+        <textarea
+          id="event-text"
+          class="textarea"
+          rows="3"
+          aria-label="Incoming message"
+        >Your flight UA123 to Nice on 11 September is delayed. It is now scheduled to arrive at 19:05 instead of 16:10.</textarea>
+        <div class="total">
+          <span id="reasoning-status" class="pill">reasoning status —</span>
+          <button id="read-message" class="button">Read this message</button>
+        </div>
+        <div id="extraction-body"></div>
+      </section>
+
       <section id="summary" class="panel">
         <h2 class="visually-hidden">State</h2>
         <div id="summary-body" class="summary"></div>

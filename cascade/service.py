@@ -18,6 +18,7 @@ from cascade.planning.demo import demo_planner
 from cascade.planning.models import CandidatePlan, PlanningResult, SearchPolicy
 from cascade.planning.planner import RecoveryPlanner
 from cascade.planning.severity import classify
+from cascade.planning.skills import Skill, load_skills, select
 from cascade.security.approvals import ApprovalRequest, grant, reject
 from cascade.tools.demo import demo_gateway
 from cascade.tools.gateway import ExecutionContext, ToolGateway
@@ -50,6 +51,7 @@ class CascadeService:
         self.gateway = gateway or demo_gateway()
         self.executor = PlanExecutor(self.gateway)
         self.permissions = permissions or PermissionPolicy()
+        self.skills = load_skills()
         self.approvals: dict[str, ApprovalRequest] = {}
         self.executions: dict[str, ExecutionResult] = {}
 
@@ -186,12 +188,22 @@ class CascadeService:
             )
             return result
 
+    def skill_for(self, incident: Incident, name: str | None) -> Skill | None:
+        """An explicit name wins; otherwise the most specific matching trigger does."""
+        if name is None:
+            return select(self.world, incident, self.skills)
+        chosen = [s for s in self.skills if s.name == name]
+        if not chosen:
+            raise ValueError(f"unknown recovery skill: {name}")
+        return max(chosen, key=lambda s: s.version)
+
     def plan(
         self,
         incident_id: str,
         expected_version: int,
         policy: SearchPolicy | None = None,
         operator_priorities: dict[str, tuple[str, ...]] | None = None,
+        skill_name: str | None = None,
     ) -> PlanningResult:
         with self.lock:
             if expected_version != self.world.version:
@@ -199,7 +211,19 @@ class CascadeService:
             incident = next((i for i in self.incidents if i.id == incident_id), None)
             if incident is None:
                 raise KeyError(incident_id)
-            result = self.planner.plan(self.world, incident, policy, operator_priorities)
+            skill = self.skill_for(incident, skill_name)
+            if skill is not None:
+                # An explicit policy from the caller outranks the template's limits, and
+                # explicit operator priorities outrank its ordering.
+                policy = skill.policy(SearchPolicy()) if policy is None else policy
+                operator_priorities = operator_priorities or skill.priorities(self.world, incident)
+            result = self.planner.plan(
+                self.world,
+                incident,
+                policy,
+                operator_priorities,
+                skill.ref if skill else None,
+            )
             self.plans.update({p.id: p for p in result.candidates})
             self.plan_incidents[incident.id] = tuple(p.id for p in result.candidates)
             if incident.status == "OPEN":

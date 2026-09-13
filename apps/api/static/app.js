@@ -6,6 +6,8 @@ const state = {
   incident: null,
   planning: null,
   selected: null,
+  skills: [],
+  skill: null,
   approval: null,
   execution: null,
   extraction: null,
@@ -245,11 +247,26 @@ function renderIncident() {
 
   if (incident.status === "OPEN") {
     const action = text("div", "total");
+    const chooser = text("label", null, "Recovery template: ");
+    const menu = document.createElement("select");
+    menu.className = "button";
+    menu.append(new Option("match automatically", ""));
+    for (const template of state.skills) {
+      const suffix = template.auto_select ? "" : " (opt-in)";
+      const label = `${template.name} v${template.version}${suffix}`;
+      menu.append(new Option(label, template.name, false, state.skill === template.name));
+    }
+    menu.addEventListener("change", () => {
+      state.skill = menu.value || null;
+    });
+    chooser.append(menu);
     const button = text("button", "button primary", "Search feasible recoveries");
     button.addEventListener("click", () => searchRecoveries(button));
-    action.append(text("small", null, "Search is bounded and queries only fixture inventory."));
-    action.append(button);
+    action.append(chooser, button);
     body.append(action);
+    body.append(
+      text("div", "trace", "Search is bounded and queries only fixture inventory."),
+    );
   }
   el("incident-caption").textContent =
     incident.status === "OPEN"
@@ -309,7 +326,10 @@ function renderPlans() {
     const steps = text("ul", "actions");
     for (const action of plan.actions) {
       const item = document.createElement("li");
-      item.append(text("span", "tag", action.resolution), document.createTextNode(action.explanation));
+      item.append(
+        text("span", "tag", action.resolution),
+        document.createTextNode(action.explanation),
+      );
       steps.append(item);
     }
     card.append(steps);
@@ -323,6 +343,12 @@ function renderPlans() {
     card.append(choose);
     body.append(card);
   }
+
+  const applied = state.planning.skill;
+  el("plans-caption").textContent = applied
+    ? `Template ${applied.name} v${applied.version} bounded this search. ` +
+      "Every option below still passes the constraint engine."
+    : "Every option below passes the constraint engine.";
 
   if (state.planning.notes.length) {
     const notes = text("ul", "notes");
@@ -523,10 +549,12 @@ async function renderAudit() {
 // ------------------------------------------------------------------ actions
 
 async function refresh() {
-  const [{ world, assessment }, incidents] = await Promise.all([
+  const [{ world, assessment }, incidents, skills] = await Promise.all([
     call("/v1/state"),
     call("/v1/incidents"),
+    call("/v1/skills"),
   ]);
+  state.skills = skills;
   state.world = world;
   state.assessment = assessment;
   state.incident = incidents.at(-1) || null;
@@ -573,7 +601,10 @@ async function searchRecoveries(button) {
   await guard(button, async () => {
     state.planning = await call(`/v1/incidents/${state.incident.id}/plan`, {
       method: "POST",
-      body: JSON.stringify({ expected_version: state.world.version }),
+      body: JSON.stringify({
+        expected_version: state.world.version,
+        ...(state.skill ? { skill: state.skill } : {}),
+      }),
     });
     state.selected = null;
     state.approval = null;

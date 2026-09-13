@@ -38,6 +38,7 @@ class Expectation(Record):
     affected: tuple[str, ...] | None = None
     violation_ids: tuple[str, ...] | None = None
     planning_status: PlanningStatus | None = None
+    skill: str | None = None
     severity: IncidentSeverity | None = None
     candidates: int | None = None
     min_candidates: int | None = None
@@ -61,6 +62,7 @@ class Scenario(Record):
     expected_version: int = 0
     plan: bool = True
     policy: SearchPolicy | None = None
+    skill: str | None = None
     permissions: PermissionPolicy | None = None
     sandbox_providers: tuple[str, ...] | None = None
     sandbox_max_amount: Decimal | None = None

@@ -67,6 +67,11 @@ class ProviderResult(Record):
         return self
 
 
+class SkillRef(Record):
+    name: str
+    version: int = Field(ge=1)
+
+
 class SearchPolicy(Record):
     max_candidates: int = Field(default=64, ge=1, le=1024)
     max_options_per_commitment: int = Field(default=12, ge=1, le=100)
@@ -77,6 +82,23 @@ class SearchPolicy(Record):
     max_additional_cost: Decimal = Field(default=Decimal("500"), ge=0)
     # These are explicit demo defaults, exposed to callers rather than inferred.
     required_intent_ids: tuple[str, ...] = ("intent_transfer", "intent_hotel")
+    # Preservation is the base case and is always available, so it is never listed here.
+    allowed_resolutions: tuple[Resolution, ...] = (
+        "RESCHEDULED",
+        "SUBSTITUTED",
+        "COMPENSATED",
+        "ABANDONED",
+    )
+
+    @model_validator(mode="after")
+    def preservation_is_not_an_operator(self) -> Self:
+        if "PRESERVED" in self.allowed_resolutions:
+            raise ValueError("preservation is always available and cannot be restricted here")
+        if not self.allowed_resolutions:
+            raise ValueError("at least one recovery operator must be allowed")
+        if len(set(self.allowed_resolutions)) != len(self.allowed_resolutions):
+            raise ValueError("duplicate allowed resolution")
+        return self
 
 
 class CandidatePlan(Record):
@@ -106,4 +128,5 @@ class PlanningResult(Record):
     tool_calls: int
     expansions: int
     policy: SearchPolicy
+    skill: SkillRef | None = None
     notes: tuple[str, ...]

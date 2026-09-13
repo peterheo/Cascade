@@ -75,6 +75,13 @@ def test_a_missing_model_does_not_block_the_deterministic_path():
     assert "/v1/reasoning/status" in SCRIPT
 
 
+def test_the_ui_can_choose_a_recovery_template():
+    assert "/v1/skills" in SCRIPT
+    # Auto-matching stays the default: a template is only sent when one is chosen.
+    assert "state.skill ? { skill: state.skill } : {}" in SCRIPT
+    assert "opt-in" in SCRIPT
+
+
 def test_the_ui_reads_times_without_rewriting_them():
     # Converting to the viewer's timezone would misreport the itinerary's own clock.
     assert "toLocaleTimeString" not in SCRIPT

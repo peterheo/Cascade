@@ -21,7 +21,9 @@ STATIC = Path(__file__).parent / "static"
 
 class PlanRequest(Record):
     expected_version: int = Field(ge=0)
-    policy: SearchPolicy = Field(default_factory=SearchPolicy)
+    # None means "use the matched skill's limits"; an explicit policy overrides them.
+    policy: SearchPolicy | None = None
+    skill: str | None = None
 
 
 class ConfirmRequest(Record):
@@ -104,7 +106,10 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     async def assisted_plan(incident_id: str, request: PlanRequest):
         try:
             return await semantic.assisted_plan(
-                incident_id, request.expected_version, request.policy
+                incident_id,
+                request.expected_version,
+                request.policy or SearchPolicy(),
+                request.skill,
             )
         except KeyError as exc:
             raise HTTPException(404, "unknown incident") from exc
@@ -166,7 +171,12 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.post("/v1/incidents/{incident_id}/replan")
     def plan(incident_id: str, request: PlanRequest):
         try:
-            return service.plan(incident_id, request.expected_version, request.policy)
+            return service.plan(
+                incident_id,
+                request.expected_version,
+                request.policy,
+                skill_name=request.skill,
+            )
         except ConflictError as exc:
             raise HTTPException(409, str(exc)) from exc
         except KeyError as exc:
@@ -283,6 +293,11 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         if boundary is None:
             return {"enforced": False, "policy": None, "denials": []}
         return {"enforced": True, "policy": boundary.policy, "denials": boundary.denials}
+
+    @app.get("/v1/skills")
+    def skills():
+        """Versioned recovery templates. They bound the planner; they are not prompts."""
+        return service.skills
 
     @app.get("/v1/permissions")
     def permissions():

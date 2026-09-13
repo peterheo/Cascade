@@ -133,9 +133,12 @@ def run_scenario(scenario: Scenario) -> ScenarioOutcome:
         recorder.expect("violation_ids", expect.violation_ids, detected)
         if not scenario.plan or result.incident is None:
             return outcome(scenario, recorder, detected, expect.violation_ids or ())
-        planning = service.plan(result.incident.id, service.world.version, scenario.policy)
+        planning = service.plan(
+            result.incident.id, service.world.version, scenario.policy, skill_name=scenario.skill
+        )
         surfaced, feasible = feasibility(planning)
         recorder.expect("planning_status", expect.planning_status, planning.status)
+        recorder.expect("skill", expect.skill, planning.skill.name if planning.skill else None)
         recorder.expect("candidates", expect.candidates, len(planning.candidates))
         if expect.min_candidates is not None:
             recorder.expect(
@@ -185,7 +188,12 @@ def run_scenario(scenario: Scenario) -> ScenarioOutcome:
                 "sandbox_denials", expect.sandbox_denials, len(service.gateway.sandbox.denials)
             )
         if expect.replan_feasible is not None:
-            again = service.plan(result.incident.id, service.world.version, scenario.policy)
+            again = service.plan(
+                result.incident.id,
+                service.world.version,
+                scenario.policy,
+                skill_name=scenario.skill,
+            )
             surfaced_again, feasible_again = feasibility(again)
             surfaced += surfaced_again
             feasible += feasible_again

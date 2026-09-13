@@ -1,0 +1,37 @@
+{
+  "name": "flight_delay_recovery",
+  "version": 1,
+  "description": "A flight moved and the rest of the day depends on it.",
+  "trigger": {
+    "commitment_kinds": [
+      "flight"
+    ],
+    "min_delay_minutes": 5,
+    "min_hard_violations": 1
+  },
+  "inspect_kinds": [
+    "transfer",
+    "hotel",
+    "restaurant",
+    "ticket",
+    "meeting"
+  ],
+  "operators": [
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED",
+    "ABANDONED"
+  ],
+  "order": [
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED",
+    "ABANDONED"
+  ],
+  "limits": {
+    "max_candidates": 24,
+    "max_options_per_commitment": 12,
+    "max_tool_calls": 25
+  },
+  "notes": "Same-provider repair first, then substitutes, then recover money, then let go."
+}

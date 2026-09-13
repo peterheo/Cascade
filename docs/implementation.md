@@ -205,3 +205,29 @@ converting to the viewer's timezone — the constraint engine reasoned about the
 itinerary's local times, and a converted display would misreport them. Tests assert that
 every `/v1` path the script calls exists on the API, so the two cannot drift apart
 silently.
+
+## Reusable recovery skills
+
+A skill is a versioned recovery template in `cascade/data/skills/`, not a prompt. It
+states which commitment kinds its trigger fires on, how severe the incident must be,
+which downstream kinds it knows how to repair, which recovery operators it permits, the
+order to try them in, and its search limits. Everything the trigger reads — the trigger
+commitment's kind, the count of hard violations, the worst delay — comes off the incident
+deterministically.
+
+Permitting operators is a real constraint, so `SearchPolicy` carries
+`allowed_resolutions` and the planner drops provider options outside that set, counting
+them as `operator_not_allowed` rejections. Preservation is never listed anywhere: it is
+the base case the planner constructs itself, not a provider operator, and both the policy
+and the skill schema reject any attempt to restrict it.
+
+Selection is deterministic — the most specific trigger wins, then the highest version,
+then the name — and a skill may be marked `auto_select: false`. `accommodation_first_recovery`
+is opt-in for a reason worth stating: withholding abandonment can turn a recoverable day
+into an unrecoverable one, so narrowing the operator set has to be the user's choice
+rather than a default the system makes for them.
+
+Precedence is explicit. An explicit policy from the caller outranks the template's
+limits, and explicit operator priorities — including Nemotron's suggested ordering —
+outrank its ordering. The applied template's name and version are recorded on the
+planning result, so the audit trail shows which template bounded a given search.

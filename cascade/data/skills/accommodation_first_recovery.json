@@ -1,0 +1,34 @@
+{
+  "name": "accommodation_first_recovery",
+  "version": 1,
+  "description": "Opt-in: a severe delay where every commitment must end in a repair or a recovered deposit, never in a silent drop.",
+  "trigger": {
+    "commitment_kinds": [
+      "flight"
+    ],
+    "min_delay_minutes": 150,
+    "min_hard_violations": 3
+  },
+  "inspect_kinds": [
+    "transfer",
+    "hotel",
+    "restaurant",
+    "ticket"
+  ],
+  "operators": [
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED"
+  ],
+  "order": [
+    "RESCHEDULED",
+    "SUBSTITUTED",
+    "COMPENSATED"
+  ],
+  "limits": {
+    "max_candidates": 24,
+    "max_tool_calls": 25
+  },
+  "notes": "Abandonment is withheld: every commitment must end in a repair or a recovered deposit, so a plan that silently drops something cannot be surfaced.",
+  "auto_select": false
+}

@@ -118,7 +118,7 @@ class Incident(Record):
     affected_commitment_ids: tuple[str, ...]
     threatened_intent_ids: tuple[str, ...]
     violations: tuple[Violation, ...]
-    status: Literal["OPEN"] = "OPEN"
+    status: Literal["OPEN", "RESOLVED"] = "OPEN"
 
 
 class EventResult(Record):

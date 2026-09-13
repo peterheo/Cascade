@@ -22,6 +22,8 @@ class CascadeService:
         self.audit: list[dict] = []
         self.lock = RLock()
         self.plans: dict[str, CandidatePlan] = {}
+        self.plan_incidents: dict[str, str] = {}
+        self.latest_planning: PlanningResult | None = None
 
     def plan(
         self,
@@ -38,6 +40,8 @@ class CascadeService:
                 raise KeyError(incident_id)
             result = demo_planner().plan(self.world, incident, policy, operator_priorities)
             self.plans.update({p.id: p for p in result.candidates})
+            self.plan_incidents.update({p.id: incident_id for p in result.candidates})
+            self.latest_planning = result
             self.audit.append(
                 {"type": "recovery.planned", "result": result.model_dump(mode="json")}
             )

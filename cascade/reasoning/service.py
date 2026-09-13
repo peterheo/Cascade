@@ -25,6 +25,7 @@ class SemanticService:
         self.requests: dict[str, NaturalEventRequest] = {}
         self.extractions: dict[str, ExtractionResult] = {}
         self.event_to_extraction: dict[str, str] = {}
+        self.latest_assisted: AssistedPlanningResult | None = None
 
     def _version(self, expected: int):
         if self.core.world.version != expected:
@@ -269,6 +270,7 @@ class SemanticService:
                     model_calls=tuple(traces),
                     warnings=tuple(warnings),
                 )
+                self.latest_assisted = result
                 self.core.audit.append(
                     {"type": "recovery.reasoned", "result": result.model_dump(mode="json")}
                 )

@@ -13,7 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Untitled site',
+  title: 'Cascade — Your recovery workspace',
+  description:
+    'See how a change affects your plans and compare feasible recoveries.',
 };
 
 export default function RootLayout({

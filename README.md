@@ -6,7 +6,7 @@ Cascade models personal commitments as a dependency graph. When a flight changes
 deterministic code identifies downstream timing failures before an AI proposes recovery.
 
 This repository implements **Phase 1 — deterministic core**, **Phase 2 — recovery search**,
-and the **Phase 3 — Nemotron integration** of the supplied
+**Phase 3 — Nemotron integration**, and **Phase 4 — recovery workspace** of the supplied
 [architecture specification](docs/architecture.md). It is a local, single-user demo,
 with synthetic data and in-memory state that resets on restart.
 
@@ -53,7 +53,7 @@ curl -X POST http://127.0.0.1:8000/v1/incidents/inc_demo_flight_delay_v0/plan \
   -H 'Content-Type: application/json' -d '{"expected_version": 1}'
 ```
 
-Repeated demo injection is idempotent. Restart the server to reset. `POST /v1/events`
+Repeated demo injection is idempotent. Use the UI reset or restart the server to reset. `POST /v1/events`
 accepts typed mutations with an event ID, expected world version, timezone-aware
 start/end timestamps, and source provenance. Conflicting IDs, stale versions, and
 low-confidence inputs return 409; invalid data returns 422. The confidence threshold
@@ -106,16 +106,44 @@ activities, compensation, and globally feasible tradeoffs.
 
 ## Next milestones
 
-1. Next.js graph and recovery comparison UI, approvals, execution, and verification (Phase 4).
-2. PostgreSQL persistence and incident lifecycle reconciliation; historical incidents
-   currently remain open even if a later event improves the world.
-3. Real connectors, OpenShell boundary, and the broader scenario evaluation suite.
+1. PostgreSQL persistence and incident lifecycle reconciliation; historical incidents
+   resolve after a verified recovery, while arbitrary event reconciliation remains future work.
+2. Real connectors, OpenShell boundary, and the broader scenario evaluation suite.
 
-Resource conflicts, general user policy, recovery severity classification, provider
+Resource conflicts, general user policy, recovery severity classification, real provider
 execution, authentication, and persistent audit storage are not implemented yet.
-`AWAITING_APPROVAL` is a candidate status; the execution/authorization layer is a
-later milestone. Fixture quality values are explicit demo assumptions, not learned
-preferences. Search completeness refers only to the queried inventory and operators.
+Approvals bind the exact plan, world version, and cost; execution stops on stale
+state or failed verification and retains completed changes. Fixture quality values are explicit demo assumptions, not
+learned preferences. Search completeness refers only to the queried inventory and operators.
 
 Package layout follows the design's domain/graph/constraints split. `cascade/service.py`
 is the temporary in-memory orchestration boundary; `apps/api` is the HTTP adapter.
+
+## Phase 4 workspace
+
+Run the API and frontend in separate terminals:
+
+```sh
+uv run --env-file .env uvicorn apps.api.main:app --reload --host 127.0.0.1
+```
+
+```sh
+cd apps/web
+npm ci
+npm run dev -- --host 127.0.0.1
+```
+
+Open http://localhost:3000. Simulate a delay, inspect the dependency chain, compare
+five recovery plans, review exact actions and costs, then approve a simulated run.
+The activity view shows step verification and audit evidence. Cancellation preserves
+completed steps. Natural-language updates and model comparisons use the local API.
+
+The private hosted preview replays synthetic snapshots exported from the tested
+Python engine. It works without the local server; live Nemotron and persistent
+backend hosting are not included in that preview. All execution uses mock providers;
+no real bookings, payments, cancellations, or refunds occur.
+
+Frontend validation: `npm run typecheck`, `npm run lint`, `npm test`, and
+`npm run build` inside `apps/web`. Browser interaction and WebMCP registration were
+not tested in this environment. Regenerate the hosted replay after fixture changes
+with `uv run python scripts/export_web_demo.py`.

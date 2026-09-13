@@ -46,9 +46,18 @@ export default defineConfig(async () => {
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+      proxy: {
+        '/cascade-api': {
+          target: 'http://127.0.0.1:8000',
+          changeOrigin: true,
+          rewrite: (path: string) => path.replace(/^\/cascade-api/, ''),
+        },
+      },
+    },
     plugins: [
       vinext(),
       sites(),

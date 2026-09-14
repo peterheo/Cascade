@@ -189,6 +189,9 @@ export default function Home() {
   const execution = workspace.executions.at(-1),
     running = execution?.status === 'RUNNING',
     recovered = execution?.status === 'SUCCEEDED';
+  const verifiedSteps =
+    execution?.outcomes.filter((outcome) => outcome.status === 'VERIFIED')
+      .length || 0;
   const incident = [...workspace.incidents]
     .reverse()
     .find((i) => i.status === 'OPEN');
@@ -526,6 +529,8 @@ export default function Home() {
             <h1>
               {recovered ? (
                 'Your evening, recovered.'
+              ) : running ? (
+                'Your recovery is underway.'
               ) : (
                 <>
                   One evening. <span>Everything connected.</span>
@@ -578,21 +583,29 @@ export default function Home() {
             <strong>
               {recovered
                 ? 'A feasible evening. Your choice, carried through.'
-                : disrupted
-                  ? `${conflicts.length} timing conflicts need attention.`
-                  : 'Your world is stable.'}
+                : running
+                  ? 'Your approved changes are being applied.'
+                  : disrupted
+                    ? `${conflicts.length} timing conflicts need attention.`
+                    : 'Your world is stable.'}
             </strong>
             <p>
               {recovered
                 ? 'Approved changes are verified in the simulated provider state.'
-                : disrupted
-                  ? 'Cascade has traced the consequences. Choose what matters most from here.'
-                  : 'Your plans fit together. Cascade is ready when reality changes.'}
+                : running
+                  ? 'Cascade is applying and verifying each step in order.'
+                  : disrupted
+                    ? 'Cascade has traced the consequences. Choose what matters most from here.'
+                    : 'Your plans fit together. Cascade is ready when reality changes.'}
             </p>
           </div>
           <span className="banner-count">
-            {disrupted ? `${affected.size} affected` : 'All clear'}
-            {!disrupted && <Check size={16} />}
+            {running
+              ? `${verifiedSteps} / ${execution?.total_steps || 0} verified`
+              : disrupted
+                ? `${affected.size} affected`
+                : 'All clear'}
+            {!running && !disrupted && <Check size={16} />}
           </span>
         </output>
         {!local && (
@@ -902,7 +915,12 @@ export default function Home() {
                   </span>
                 </div>
                 <Progress
-                  value={(execution.next_step / execution.total_steps) * 100}
+                  aria-label="Recovery progress"
+                  value={
+                    execution.total_steps
+                      ? (execution.next_step / execution.total_steps) * 100
+                      : 0
+                  }
                 />
                 <div className="execution-steps">
                   {execution.outcomes.map((o) => (
@@ -917,6 +935,14 @@ export default function Home() {
                   ))}
                 </div>
                 <p>{execution.message}</p>
+                {execution.status === 'SUCCEEDED' && (
+                  <div className="execution-controls">
+                    <Button variant="outline" onClick={() => setTab('audit')}>
+                      Review activity
+                      <ArrowRight size={14} />
+                    </Button>
+                  </div>
+                )}
                 {running && (
                   <div className="execution-controls">
                     <Button

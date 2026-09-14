@@ -1,4 +1,24 @@
 import type { Workspace } from './cascade-types';
+
+export type SandboxDenial = {
+  at: string;
+  action_id: string;
+  provider: string;
+  operation: string;
+  reason: string;
+};
+export type SandboxState = {
+  enforced: boolean;
+  policy: {
+    name: string;
+    allowed_providers: string[];
+    allowed_operations: string[];
+    allowed_endpoints: string[];
+    allow_network: boolean;
+    max_amount: string | number;
+  } | null;
+  denials: SandboxDenial[];
+};
 import data from './preview-data.json' with { type: 'json' };
 const replay = data as unknown as {
   initial: Workspace;
@@ -77,6 +97,17 @@ export function subscribeToWorkspaceEvents(
     source = null;
     if (reconnectTimer) clearTimeout(reconnectTimer);
   };
+}
+
+export async function securitySandbox(): Promise<SandboxState | null> {
+  if (!isLocal()) return null;
+  const response = await fetch('/cascade-api/v1/security/sandbox');
+  const payload = (await response
+    .json()
+    .catch(() => null)) as SandboxState | null;
+  if (!response.ok)
+    throw new Error('The security boundary could not be loaded.');
+  return payload;
 }
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {

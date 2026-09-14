@@ -13,6 +13,7 @@ import {
   MessageSquareText,
   Play,
   RotateCcw,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   X,
@@ -29,7 +30,13 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { DependencyFlow } from '@/components/cascade-flow';
-import { api, isLocal, subscribeToWorkspaceEvents } from '@/lib/cascade-api';
+import {
+  api,
+  isLocal,
+  securitySandbox,
+  subscribeToWorkspaceEvents,
+} from '@/lib/cascade-api';
+import type { SandboxDenial, SandboxState } from '@/lib/cascade-api';
 import type {
   Workspace,
   Plan,
@@ -126,6 +133,11 @@ function activityDetail(a: Audit) {
             : '';
 }
 
+function denialForAudit(a: Audit, denials: SandboxDenial[]) {
+  const evidence = JSON.stringify(a);
+  return denials.find((denial) => evidence.includes(denial.action_id));
+}
+
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace>(
       replay.initial as unknown as Workspace,
@@ -141,7 +153,8 @@ export default function Home() {
     [eventText, setEventText] = useState(
       'My flight to Nice on September 11, 2026 now arrives at 19:05 local time instead of 16:10.',
     ),
-    [extraction, setExtraction] = useState<Extraction | null>(null);
+    [extraction, setExtraction] = useState<Extraction | null>(null),
+    [sandbox, setSandbox] = useState<SandboxState | null>(null);
   const local = useSyncExternalStore(
     () => () => {},
     isLocal,
@@ -172,10 +185,15 @@ export default function Home() {
     v.affected_commitment_ids.includes(selected),
   );
   const affected = new Set(incident?.affected_commitment_ids || []);
+  const sandboxDenials = sandbox?.enforced ? sandbox.denials : [];
   async function refresh() {
     const result = await api<Workspace>('/v1/workspace');
     setWorkspace(result);
     setConnected(true);
+    if (local)
+      void securitySandbox()
+        .then(setSandbox)
+        .catch(() => {});
     return result;
   }
   useEffect(() => {
@@ -197,6 +215,18 @@ export default function Home() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!local) return;
+    let active = true;
+    void securitySandbox()
+      .then((result) => {
+        if (active) setSandbox(result);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [local]);
   useEffect(() => {
     if (!local) return;
     return subscribeToWorkspaceEvents(() =>
@@ -870,6 +900,34 @@ export default function Home() {
                 </div>
                 <span className="meta">{workspace.audit.length} events</span>
               </div>
+              {sandboxDenials.length > 0 && (
+                <div className="security-callout" aria-live="polite">
+                  <div className="security-callout-heading">
+                    <ShieldAlert size={18} />
+                    <strong>
+                      Sandbox blocked {sandboxDenials.length} action
+                      {sandboxDenials.length === 1 ? '' : 's'}.
+                    </strong>
+                    <span className="security-chip">
+                      <ShieldAlert size={12} /> Security
+                    </span>
+                  </div>
+                  <ul className="security-denial-list">
+                    {sandboxDenials.map((denial) => (
+                      <li key={`${denial.action_id}-${denial.at}`}>
+                        <span className="security-chip">Security</span>
+                        <details>
+                          <summary>
+                            {denial.provider} · {denial.operation}
+                          </summary>
+                          <p>{denial.reason}</p>
+                          <code>{denial.action_id}</code>
+                        </details>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {workspace.audit.length === 0 ? (
                 <p className="empty-audit">
                   Your itinerary is ready. Changes and decisions will appear
@@ -877,34 +935,49 @@ export default function Home() {
                 </p>
               ) : (
                 <ol className="audit-list">
-                  {[...workspace.audit].reverse().map((a, i) => (
-                    <li key={`${a.type}-${i}`}>
-                      <span
-                        className={`audit-dot ${a.type.includes('failed') || a.type.includes('blocked') ? 'warn' : ''}`}
-                      >
-                        {a.type.includes('verified') ||
-                        a.type === 'incident.resolved' ? (
-                          <Check size={14} />
-                        ) : (
-                          <CircleDot size={14} />
-                        )}
-                      </span>
-                      <div>
-                        <strong>
-                          {activityTitles[a.type] ||
-                            a.type.replaceAll('.', ' ')}
-                        </strong>
-                        <p>{activityDetail(a)}</p>
-                        <details>
-                          <summary>Inspect evidence</summary>
-                          <pre>{JSON.stringify(a, null, 2)}</pre>
-                        </details>
-                      </div>
-                      <span className="audit-index">
-                        {String(workspace.audit.length - i).padStart(2, '0')}
-                      </span>
-                    </li>
-                  ))}
+                  {[...workspace.audit].reverse().map((a, i) => {
+                    const securityDenial = denialForAudit(a, sandboxDenials);
+                    return (
+                      <li key={`${a.type}-${i}`}>
+                        <span
+                          className={`audit-dot ${a.type.includes('failed') || a.type.includes('blocked') ? 'warn' : ''}`}
+                        >
+                          {a.type.includes('verified') ||
+                          a.type === 'incident.resolved' ? (
+                            <Check size={14} />
+                          ) : (
+                            <CircleDot size={14} />
+                          )}
+                        </span>
+                        <div>
+                          <strong>
+                            {activityTitles[a.type] ||
+                              a.type.replaceAll('.', ' ')}
+                          </strong>
+                          {securityDenial && (
+                            <details className="security-details">
+                              <summary>
+                                <span className="security-chip">
+                                  <ShieldAlert size={12} /> Security
+                                </span>
+                                {securityDenial.provider} ·{' '}
+                                {securityDenial.operation}
+                              </summary>
+                              <p>{securityDenial.reason}</p>
+                            </details>
+                          )}
+                          <p>{activityDetail(a)}</p>
+                          <details>
+                            <summary>Inspect evidence</summary>
+                            <pre>{JSON.stringify(a, null, 2)}</pre>
+                          </details>
+                        </div>
+                        <span className="audit-index">
+                          {String(workspace.audit.length - i).padStart(2, '0')}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ol>
               )}
             </section>

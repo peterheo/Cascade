@@ -244,6 +244,67 @@ def test_unverifiable_write_is_not_success(disrupted):
     assert service.world.version == 1
 
 
+def test_write_that_raises_after_landing_is_verified_without_a_second_booking(disrupted):
+    service, _, plan, gateway = disrupted
+    provider = gateway.providers["mock_transfer"]
+    original_apply = provider.apply
+
+    def apply_then_raise(action):
+        original_apply(action)
+        raise TimeoutError("vendor write timed out after confirmation")
+
+    provider.apply = apply_then_raise
+    approve_all(service, service.execute(plan.id, service.world.version, "user").approval_request)
+    result = service.execute(plan.id, service.world.version, "user")
+
+    assert result.status == "COMPLETED"
+    assert result.steps[0].status == "EXECUTED"
+    assert result.steps[0].call.result.success
+    assert result.steps[0].call.result.verified
+    assert result.steps[0].call.result.side_effect
+    assert len(provider.ledger) == 1
+
+
+def test_write_that_raises_before_landing_is_known_to_have_no_side_effect(disrupted):
+    service, _, plan, gateway = disrupted
+    provider = gateway.providers["mock_transfer"]
+
+    def apply_times_out(action):
+        raise TimeoutError("vendor write timed out before confirmation")
+
+    provider.apply = apply_times_out
+    approve_all(service, service.execute(plan.id, service.world.version, "user").approval_request)
+    result = service.execute(plan.id, service.world.version, "user")
+
+    assert result.steps[0].status == "FAILED"
+    assert result.steps[0].call.result.success is False
+    assert result.steps[0].call.result.side_effect is False
+    assert "No provider record exists" in result.steps[0].call.result.detail
+    assert not provider.ledger
+
+
+def test_write_and_readback_that_raise_require_reconciliation(disrupted):
+    service, _, plan, gateway = disrupted
+    provider = gateway.providers["mock_transfer"]
+
+    def apply_times_out(action):
+        raise TimeoutError("vendor write timed out")
+
+    def verify_times_out(action):
+        raise TimeoutError("provider read timed out")
+
+    provider.apply = apply_times_out
+    provider.verify = verify_times_out
+    approve_all(service, service.execute(plan.id, service.world.version, "user").approval_request)
+    result = service.execute(plan.id, service.world.version, "user")
+
+    assert result.steps[0].status == "FAILED"
+    assert result.steps[0].call.result.success is False
+    assert result.steps[0].call.result.side_effect
+    assert "Read-back also failed" in result.steps[0].call.result.detail
+    assert any("reconcile with the provider" in note for note in result.notes)
+
+
 def test_adapter_failure_is_unknown_state_not_success(disrupted):
     service, _, plan, gateway = disrupted
 

@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -9,11 +10,18 @@ from cascade.planning.operators import apply_option
 from cascade.service import CascadeService, ConflictError
 from cascade.tools.adapters.booking import FixtureBookingProvider
 from cascade.tools.demo import KINDS, demo_fixture
-from cascade.tools.gateway import ToolAction, ToolGateway, ToolResult
+from cascade.tools.gateway import ToolAction, ToolGateway, ToolResult, reconcile_raised_write
 
 
 def digest(plan):
     return hashlib.sha256(plan.model_dump_json().encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class _ProviderCall:
+    result: ToolResult
+    raised: bool = False
+    error: Exception | None = None
 
 
 class ExecutionService:
@@ -91,19 +99,24 @@ class ExecutionService:
             raise ConflictError("provider terms changed; a new plan and approval are required")
 
     @staticmethod
-    def _provider_result(provider, action: ToolAction, method: str) -> ToolResult:
+    def _provider_result(provider, action: ToolAction, method: str) -> _ProviderCall:
         try:
-            return getattr(provider, method)(action)
+            return _ProviderCall(getattr(provider, method)(action))
         except Exception as exc:
-            return ToolResult(
-                success=False,
-                provider=action.provider,
-                operation=action.operation,
-                side_effect=method == "apply",
-                raw_result_ref=f"error:{action.id}:{method}",
-                detail=(
-                    f"Provider {method} raised {type(exc).__name__}; verification is unavailable."
+            return _ProviderCall(
+                result=ToolResult(
+                    success=False,
+                    provider=action.provider,
+                    operation=action.operation,
+                    side_effect=method == "apply",
+                    raw_result_ref=f"error:{action.id}:{method}",
+                    detail=(
+                        f"Provider {method} raised {type(exc).__name__}; "
+                        "verification is unavailable."
+                    ),
                 ),
+                raised=True,
+                error=exc,
             )
 
     def start(self, plan_id, approval_id, expected_version):
@@ -227,17 +240,38 @@ class ExecutionService:
                         )
                         verified = False
                     else:
-                        applied = self._provider_result(provider, external_action, "apply")
-                        if applied.success:
-                            verification = self._provider_result(
+                        applied_call = self._provider_result(provider, external_action, "apply")
+                        applied = applied_call.result
+                        if applied_call.raised:
+                            verification_call = self._provider_result(
                                 provider, external_action, "verify"
                             )
+                            verification = verification_call.result
+                            classified = reconcile_raised_write(
+                                external_action,
+                                applied_call.error
+                                or RuntimeError("provider apply raised without an error"),
+                                verify_error=verification_call.error
+                                if verification_call.raised
+                                else None,
+                                observed=None if verification_call.raised else verification,
+                            )
+                            verification = classified
+                            verified = classified.success
+                            write_side_effect = classified.side_effect
+                        elif applied.success:
+                            verification_call = self._provider_result(
+                                provider, external_action, "verify"
+                            )
+                            verification = verification_call.result
                             verified = verification.success and ToolGateway._matches(
                                 external_action.postcondition, verification
                             )
+                            write_side_effect = applied.side_effect
                         else:
                             verification = applied
                             verified = False
+                            write_side_effect = applied.side_effect
                     if verified:
                         next_world = next_world.model_copy(
                             update={"version": self.core.world.version + 1}
@@ -259,7 +293,7 @@ class ExecutionService:
                     explanation=provider_detail or action.explanation,
                     occurred_at=datetime.now(UTC),
                     world_version=self.core.world.version,
-                    side_effect=(applied.side_effect if applied is not None else False),
+                    side_effect=(write_side_effect if applied is not None else False),
                 )
                 updated = execution.model_copy(
                     update={

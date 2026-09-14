@@ -225,6 +225,7 @@ class ExecutionService:
                             raw_result_ref=f"missing:{current.kind}",
                             detail="Provider unavailable; verification is unavailable.",
                         )
+                        verified = False
                     else:
                         applied = self._provider_result(provider, external_action, "apply")
                         if applied.success:
@@ -236,6 +237,7 @@ class ExecutionService:
                             )
                         else:
                             verification = applied
+                            verified = False
                     if verified:
                         next_world = next_world.model_copy(
                             update={"version": self.core.world.version + 1}

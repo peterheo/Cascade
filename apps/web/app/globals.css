@@ -936,6 +936,73 @@ footer span:last-child {
   background: #111923;
   overflow: hidden;
 }
+.security-callout {
+  margin: 18px 24px 8px;
+  padding: 14px 16px;
+  border: 1px solid #70444a;
+  border-radius: 10px;
+  background: #261a1f;
+}
+.security-callout-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #ffb7ad;
+}
+.security-callout-heading strong {
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 550;
+}
+.security-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid #84545a;
+  border-radius: 999px;
+  background: #42282d;
+  color: #ffc1b7;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.security-denial-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0 27px;
+  padding: 0;
+  list-style: none;
+}
+.security-denial-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.security-denial-list details {
+  min-width: 0;
+  flex: 1;
+}
+.security-denial-list summary {
+  color: #ffd0ca;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.security-denial-list p,
+.security-details p {
+  margin: 6px 0 0;
+  color: #d3a9a6;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.security-denial-list code {
+  color: #a98588;
+  font-size: 0.7rem;
+}
 .audit-list {
   list-style: none;
   padding: 8px 24px;
@@ -983,6 +1050,17 @@ footer span:last-child {
   color: #8398bb;
   cursor: pointer;
   margin-top: 10px;
+}
+.security-details {
+  margin: 7px 0;
+}
+.security-details summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin-top: 0;
+  color: #ffb7ad;
 }
 .audit-index {
   font-size: 0.75rem;

@@ -43,6 +43,20 @@ def cheapest(candidates: tuple[CandidatePlan, ...]) -> CandidatePlan:
 
 
 def build(scenario: Scenario) -> CascadeService:
+    world = demo_world()
+    dropped = set(scenario.drop_dependencies)
+    available = {dependency.id for dependency in world.dependencies}
+    missing = dropped - available
+    if missing:
+        raise ValueError(f"unknown dependency ID(s): {', '.join(sorted(missing))}")
+    if dropped:
+        world = world.model_copy(
+            update={
+                "dependencies": tuple(
+                    dependency for dependency in world.dependencies if dependency.id not in dropped
+                )
+            }
+        )
     gateway = demo_gateway()
     if scenario.sandbox_providers is not None or scenario.sandbox_max_amount is not None:
         gateway.sandbox = PolicySandbox(
@@ -68,7 +82,7 @@ def build(scenario: Scenario) -> CascadeService:
     for kind in scenario.faults.empty_inventory:
         planner.providers[kind] = EmptyInventoryProvider(kind)
     return CascadeService(
-        demo_world(),
+        world,
         gateway,
         scenario.permissions or PermissionPolicy(),
         planner,

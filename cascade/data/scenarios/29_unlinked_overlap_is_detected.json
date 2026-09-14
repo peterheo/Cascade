@@ -1,0 +1,26 @@
+{
+  "id": "29_unlinked_overlap_is_detected",
+  "title": "An unlinked overlap is detected after a delay",
+  "description": "Even without an inferred dinner-to-movie dependency, projected times expose the physical conflict.",
+  "arrival": "19:05",
+  "tags": [
+    "detection",
+    "propagation"
+  ],
+  "drop_dependencies": [
+    "restaurant_to_ticket"
+  ],
+  "plan": false,
+  "expect": {
+    "incident": true,
+    "hard_violations": 5,
+    "soft_violations": 0,
+    "violation_ids": [
+      "flight_to_transfer",
+      "hotel_cutoff",
+      "hotel_to_restaurant",
+      "overlap:restaurant:ticket",
+      "transfer_to_hotel"
+    ]
+  }
+}

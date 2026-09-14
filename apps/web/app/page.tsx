@@ -29,7 +29,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { DependencyFlow } from '@/components/cascade-flow';
-import { api, isLocal } from '@/lib/cascade-api';
+import { api, isLocal, subscribeToWorkspaceEvents } from '@/lib/cascade-api';
 import type {
   Workspace,
   Plan,
@@ -196,6 +196,17 @@ export default function Home() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!local) return;
+    return subscribeToWorkspaceEvents(() =>
+      api<Workspace>('/v1/workspace')
+        .then((result) => {
+          setWorkspace(result);
+          setConnected(true);
+        })
+        .catch(() => {}),
+    );
+  }, [local]);
   async function perform(label: string, action: () => Promise<void>) {
     setBusy(label);
     setError('');

@@ -45,6 +45,51 @@ def test_approved_simulation_verifies_every_action_and_resolves(ready):
     assert core.world.version == 5
 
 
+def test_simulation_does_not_adopt_an_unverified_provider_write(ready):
+    core, incident, plan, executor = ready
+    approval = executor.decide(incident.id, plan.id, 1, True)
+    execution = executor.start(plan.id, approval.id, 1)
+    provider = executor.providers["transfer"]
+    original_verify = provider.verify
+    calls = []
+
+    def wrong_readback(action):
+        calls.append(action.id)
+        return original_verify(action).model_copy(
+            update={"observed_start_at": None, "observed_end_at": None}
+        )
+
+    provider.verify = wrong_readback
+    before = core.world
+    result = executor.advance(execution.id, 0)
+
+    assert calls == [f"act:{plan.id}:{plan.actions[0].id}"]
+    assert result.status == "FAILED"
+    assert result.outcomes[0].status == "FAILED"
+    assert result.outcomes[0].side_effect
+    assert core.world == before
+    assert provider.ledger
+
+
+def test_simulation_reports_failed_when_provider_apply_raises(ready):
+    core, incident, plan, executor = ready
+    approval = executor.decide(incident.id, plan.id, 1, True)
+    execution = executor.start(plan.id, approval.id, 1)
+    provider = executor.providers["transfer"]
+
+    def apply_times_out(action):
+        raise TimeoutError("vendor write timed out")
+
+    provider.apply = apply_times_out
+    before = core.world
+    result = executor.advance(execution.id, 0)
+
+    assert result.status == "FAILED"
+    assert result.outcomes[0].status == "FAILED"
+    assert result.outcomes[0].side_effect
+    assert core.world == before
+
+
 def test_stale_plan_cannot_be_approved(ready):
     core, incident, plan, executor = ready
     core.ingest(delay_event(version=1, arrival="20:00"))

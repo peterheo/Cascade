@@ -60,8 +60,11 @@ class EventStream:
 
     def unsubscribe(self, queue: deque[Notification]) -> None:
         with self.lock:
-            if queue in self.subscribers:
-                self.subscribers.remove(queue)
+            # `deque.__eq__` compares contents, so an idle queue can compare equal
+            # to another subscriber. Remove the exact subscription by identity.
+            self.subscribers = [
+                candidate for candidate in self.subscribers if candidate is not queue
+            ]
 
     def publish(self, event: StreamEvent, world_version: int, **detail) -> Notification:
         with self.lock:

@@ -3,10 +3,13 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from cascade.constraints.engine import evaluate
+from cascade.execution.executor import action_for
 from cascade.execution.simulation_models import ActionOutcome, Approval, Execution
-from cascade.planning.demo import demo_planner
 from cascade.planning.operators import apply_option
 from cascade.service import CascadeService, ConflictError
+from cascade.tools.adapters.booking import FixtureBookingProvider
+from cascade.tools.demo import KINDS, demo_fixture
+from cascade.tools.gateway import ToolAction, ToolGateway, ToolResult
 
 
 def digest(plan):
@@ -16,13 +19,16 @@ def digest(plan):
 class ExecutionService:
     """Each advance applies one mock action and verifies the remaining full plan.
 
-    The provider inventory is queried again before effects. The in-memory world is
-    the mock provider's recorded state; no external reservation APIs are contacted.
+    The provider inventory is queried again before effects. Each simulated write is
+    read back from its fixture provider ledger before the in-memory world changes.
     """
 
     def __init__(self, core: CascadeService, providers=None):
         self.core = core
-        self.providers = providers if providers is not None else demo_planner().providers
+        if providers is None:
+            fixture = demo_fixture()
+            providers = {kind: FixtureBookingProvider(kind, fixture) for kind in KINDS}
+        self.providers = providers
         self.approvals: dict[str, Approval] = {}
         self.executions: dict[str, Execution] = {}
         self.bases = {}
@@ -83,6 +89,22 @@ class ExecutionService:
             raise ConflictError("provider availability is no longer confirmed")
         if not any(option == action for option in result.options):
             raise ConflictError("provider terms changed; a new plan and approval are required")
+
+    @staticmethod
+    def _provider_result(provider, action: ToolAction, method: str) -> ToolResult:
+        try:
+            return getattr(provider, method)(action)
+        except Exception as exc:
+            return ToolResult(
+                success=False,
+                provider=action.provider,
+                operation=action.operation,
+                side_effect=method == "apply",
+                raw_result_ref=f"error:{action.id}:{method}",
+                detail=(
+                    f"Provider {method} raised {type(exc).__name__}; verification is unavailable."
+                ),
+            )
 
     def start(self, plan_id, approval_id, expected_version):
         with self.core.lock:
@@ -185,29 +207,59 @@ class ExecutionService:
                 )
                 next_world = apply_option(self.core.world, action)
                 changed = action.resolution != "PRESERVED"
+                applied: ToolResult | None = None
+                verification: ToolResult | None = None
+                verified = True
                 if changed:
-                    next_world = next_world.model_copy(
-                        update={"version": self.core.world.version + 1}
+                    current = next(
+                        c for c in self.core.world.commitments if c.id == action.commitment_id
                     )
-                    self.core.world = next_world
-                recorded = next(
-                    (c for c in self.core.world.commitments if c.id == action.commitment_id), None
-                )
-                verified = recorded == action.replacement
+                    provider = self.providers.get(current.kind)
+                    provider_name = getattr(provider, "name", f"mock_{current.kind}")
+                    external_action = action_for(plan, action, provider_name)
+                    if provider is None:
+                        verification = ToolResult(
+                            success=False,
+                            provider=provider_name,
+                            operation=external_action.operation,
+                            raw_result_ref=f"missing:{current.kind}",
+                            detail="Provider unavailable; verification is unavailable.",
+                        )
+                        verified = False
+                    else:
+                        applied = self._provider_result(provider, external_action, "apply")
+                        if applied.success:
+                            verification = self._provider_result(
+                                provider, external_action, "verify"
+                            )
+                            verified = verification.success and ToolGateway._matches(
+                                external_action.postcondition, verification
+                            )
+                        else:
+                            verification = applied
+                            verified = False
+                    if verified:
+                        next_world = next_world.model_copy(
+                            update={"version": self.core.world.version + 1}
+                        )
+                        self.core.world = next_world
                 assessment = evaluate(self.core.world)
                 last = expected_step + 1 == len(plan.actions)
                 verified = verified and (
                     not last or not any(v.severity == "hard" for v in assessment.violations)
+                )
+                provider_detail = (
+                    verification.detail if verification is not None and not verified else None
                 )
                 outcome = ActionOutcome(
                     action_id=action.id,
                     commitment_id=action.commitment_id,
                     resolution=action.resolution,
                     status="VERIFIED" if verified else "FAILED",
-                    explanation=action.explanation,
+                    explanation=provider_detail or action.explanation,
                     occurred_at=datetime.now(UTC),
                     world_version=self.core.world.version,
-                    side_effect=changed,
+                    side_effect=(applied.side_effect if applied is not None else False),
                 )
                 updated = execution.model_copy(
                     update={

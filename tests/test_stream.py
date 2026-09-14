@@ -32,6 +32,15 @@ def test_an_event_reaches_every_subscriber():
     assert len(first) == 1 and len(second) == 2
 
 
+def test_unsubscribe_removes_the_exact_idle_queue():
+    stream = EventStream()
+    first, second = stream.subscribe(), stream.subscribe()
+    stream.unsubscribe(second)
+    stream.publish("state.changed", 3, reason="identity")
+    assert types(first) == ["state.changed"]
+    assert not second
+
+
 def test_a_slow_reader_loses_the_oldest_not_the_newest():
     stream = EventStream()
     queue = stream.subscribe()

@@ -10,6 +10,7 @@ import {
   type Edge as FlowEdge,
   type Node as FlowNode,
   type NodeProps,
+  useNodesState,
 } from '@xyflow/react';
 import {
   CircleDot,
@@ -19,7 +20,7 @@ import {
   TramFront,
   Utensils,
 } from 'lucide-react';
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Commitment, Edge, Violation, World } from '@/lib/cascade-types';
 
 type CommitmentData = {
@@ -195,10 +196,74 @@ export function DependencyFlow({
       ),
     [preview, violations],
   );
-  const nodes = useMemo(
-    () => makeNodes(world, atRisk, selected, recovered, onSelect),
-    [world, atRisk, selected, recovered, onSelect],
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+  const selectCommitment = useCallback(
+    (id: string) => onSelectRef.current(id),
+    [],
   );
+  const commitmentIds = useMemo(
+    () =>
+      world.commitments
+        .map((commitment) => commitment.id)
+        .sort()
+        .join('|'),
+    [world.commitments],
+  );
+  const riskIds = useMemo(() => [...atRisk].sort().join('|'), [atRisk]);
+  // The signatures are intentional memo dependencies; SSE refreshes replace these object identities.
+  const nodeDataSignature = useMemo(
+    () =>
+      [
+        commitmentIds,
+        world.commitments
+          .map((commitment) =>
+            [
+              commitment.id,
+              commitment.kind,
+              commitment.title,
+              commitment.start_at,
+              commitment.end_at,
+            ].join(':'),
+          )
+          .join('|'),
+        riskIds,
+        selected,
+        recovered,
+      ].join('::'),
+    [commitmentIds, world.commitments, riskIds, selected, recovered],
+  );
+  const layoutNodes = useMemo(
+    () => makeNodes(world, new Set(), selected, recovered, selectCommitment),
+    [commitmentIds, selectCommitment],
+  );
+  const desiredNodes = useMemo(
+    () => makeNodes(world, atRisk, selected, recovered, selectCommitment),
+    [nodeDataSignature, selectCommitment],
+  );
+  const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
+
+  useEffect(() => {
+    const layoutById = new Map(layoutNodes.map((node) => [node.id, node]));
+    setNodes((current) => {
+      const currentById = new Map(current.map((node) => [node.id, node]));
+      const currentIds = [...currentById.keys()].sort().join('|');
+      const idsChanged = currentIds !== commitmentIds;
+      return desiredNodes.map((node) => {
+        const currentNode = currentById.get(node.id);
+        return {
+          ...(idsChanged ? {} : currentNode),
+          ...node,
+          position: idsChanged
+            ? (layoutById.get(node.id)?.position ?? node.position)
+            : (currentNode?.position ?? node.position),
+        };
+      });
+    });
+  }, [commitmentIds, desiredNodes, layoutNodes, setNodes]);
+
   const edges = useMemo(
     () => makeEdges(world, atRisk, !preview && atRisk.size > 0),
     [world, atRisk, preview],
@@ -214,7 +279,8 @@ export function DependencyFlow({
           edges={edges}
           nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.25, minZoom: 0.72, maxZoom: 1.25 }}
+          fitViewOptions={{ padding: 0.25, maxZoom: 1.25 }}
+          onNodesChange={onNodesChange}
           nodesDraggable
           nodesConnectable={false}
           elementsSelectable

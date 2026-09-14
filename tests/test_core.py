@@ -65,22 +65,27 @@ def test_touching_unlinked_commitments_do_not_overlap():
     assert not any(v.constraint_id.startswith("overlap:") for v in evaluate(world).violations)
 
 
-def test_transitively_ordered_commitments_do_not_overlap():
+def test_soft_ordered_overlapping_commitments_report_both_violations():
     world = demo_world()
-    restaurant = next(c for c in world.commitments if c.id == "restaurant").model_copy(
-        update={"start_at": at("16:50"), "end_at": at("17:30")}
+    ticket = next(c for c in world.commitments if c.id == "ticket").model_copy(
+        update={"start_at": at("19:45"), "end_at": at("21:30")}
     )
     world = world.model_copy(
         update={
-            "commitments": tuple(
-                restaurant if c.id == "restaurant" else c for c in world.commitments
+            "commitments": tuple(ticket if c.id == "ticket" else c for c in world.commitments),
+            "dependencies": tuple(
+                d.model_copy(update={"hard": False}) if d.id == "restaurant_to_ticket" else d
+                for d in world.dependencies
             ),
-            "dependencies": tuple(d for d in world.dependencies if d.id != "restaurant_to_ticket"),
         }
     )
 
-    assert not any(
-        v.constraint_id == "overlap:restaurant:transfer" for v in evaluate(world).violations
+    violations = evaluate(world).violations
+    overlap = next(v for v in violations if v.constraint_id == "overlap:restaurant:ticket")
+    assert overlap.affected_commitment_ids == ("restaurant", "ticket")
+    assert overlap.delay_minutes == 75
+    assert any(
+        v.constraint_id == "restaurant_to_ticket" and v.severity == "soft" for v in violations
     )
 
 

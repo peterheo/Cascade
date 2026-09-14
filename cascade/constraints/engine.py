@@ -57,11 +57,9 @@ def evaluate(world: World) -> Assessment:
                     explanation=deadline.explanation,
                 )
             )
-    reachable = {cid: nx.descendants(graph, cid) for cid in commitments}
+    # Hard-edge projection separates ordered pairs; unlinked or soft-ordered pairs can overlap.
     for index, first in enumerate(world.commitments):
         for second in world.commitments[index + 1 :]:
-            if second.id in reachable[first.id] or first.id in reachable[second.id]:
-                continue
             first_start = starts[first.id]
             second_start = starts[second.id]
             first_end = first_start + (first.end_at - first.start_at)

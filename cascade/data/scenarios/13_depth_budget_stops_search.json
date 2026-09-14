@@ -15,6 +15,6 @@
   "expect": {
     "planning_status": "BUDGET_EXHAUSTED",
     "candidates": 0,
-    "severity": "BLACK"
+    "severity_withheld": true
   }
 }

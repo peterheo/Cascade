@@ -40,6 +40,7 @@ class Expectation(Record):
     planning_status: PlanningStatus | None = None
     skill: str | None = None
     severity: IncidentSeverity | None = None
+    severity_withheld: bool = False
     candidates: int | None = None
     min_candidates: int | None = None
     exhaustion_reported: bool = False
@@ -49,6 +50,12 @@ class Expectation(Record):
     incident_status: Literal["OPEN", "RESOLVED", "DISMISSED"] | None = None
     final_hard_violations: int | None = None
     replan_feasible: bool | None = None
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if self.severity is not None and self.severity_withheld:
+            raise ValueError("severity and severity_withheld cannot both be set")
+        return self
 
 
 class Scenario(Record):

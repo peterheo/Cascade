@@ -22,6 +22,63 @@ export function isLocal() {
     ['localhost', '127.0.0.1'].includes(window.location.hostname)
   );
 }
+
+const STREAM_EVENTS = [
+  'state.changed',
+  'incident.created',
+  'action.completed',
+  'incident.resolved',
+] as const;
+
+/**
+ * Listen to the gateway's state notifications. Notifications are only a hint
+ * to refetch; the workspace response remains the source of truth.
+ */
+export function subscribeToWorkspaceEvents(
+  onChange: () => void | Promise<void>,
+): () => void {
+  if (
+    !isLocal() ||
+    typeof window === 'undefined' ||
+    typeof window.EventSource === 'undefined'
+  )
+    return () => {};
+
+  let source: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  let retryMs = 1000;
+
+  const connect = () => {
+    if (stopped) return;
+    source = new window.EventSource('/cascade-api/stream');
+    const handleChange = () => {
+      retryMs = 1000;
+      void Promise.resolve(onChange()).catch(() => {});
+    };
+    for (const eventName of STREAM_EVENTS)
+      source.addEventListener(eventName, handleChange);
+    source.onopen = () => {
+      retryMs = 1000;
+    };
+    source.onerror = () => {
+      source?.close();
+      source = null;
+      if (stopped) return;
+      reconnectTimer = setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, 10000);
+    };
+  };
+
+  connect();
+  return () => {
+    stopped = true;
+    source?.close();
+    source = null;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+  };
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   if (!isLocal()) return structuredClone(previewRequest(path, body)) as T;
   const response = await fetch('/cascade-api/simulation' + path, {

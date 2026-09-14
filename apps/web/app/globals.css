@@ -463,92 +463,6 @@ h2 {
 .flow-commitment-node.at-risk .react-flow__handle {
   background: #e5ad68;
 }
-.graph-track {
-  display: flex;
-  align-items: center;
-  width: 100%;
-}
-.graph-stop {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-}
-.graph-stop:last-child {
-  flex: 0.85;
-}
-.commitment-node {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  min-height: 183px;
-  padding: 15px 12px;
-  border: 1px solid #34425a;
-  border-radius: 10px;
-  background: linear-gradient(145deg, #1b2638, #151e2c);
-  color: #edf2fa;
-  text-align: left;
-  transition:
-    border-color 0.2s,
-    transform 0.2s;
-}
-.commitment-node:hover {
-  transform: translateY(-3px);
-  border-color: #8796d8;
-}
-.commitment-node.selected {
-  border-color: #8794ff;
-  box-shadow:
-    0 0 0 3px #6478ff18,
-    0 12px 24px #0003;
-}
-.commitment-node.affected {
-  border-color: #b48249;
-}
-.node-icon {
-  color: #a0aefe;
-}
-.affected .node-icon {
-  color: #edb573;
-}
-.node-time {
-  font-size: 1.25rem;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-}
-.commitment-node strong {
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.5;
-}
-.node-state {
-  font-size: 0.75rem;
-  color: #a9b8cc;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.node-state:before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #73cdb1;
-}
-.affected .node-state:before {
-  background: #edb573;
-}
-.connector {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 0 0 24px;
-  height: 1px;
-  background: #586eb2;
-  color: #91a2df;
-}
 .graph-footnote {
   display: flex;
   align-items: center;
@@ -697,14 +611,8 @@ footer span:last-child {
     overflow-x: auto;
     padding: 24px 16px;
   }
-  .graph-track {
-    min-width: 700px;
-  }
   .meta {
     font-size: 0.75rem;
-  }
-  .graph-footnote {
-    min-width: 600px;
   }
   .recovery-empty {
     padding: 22px 18px;

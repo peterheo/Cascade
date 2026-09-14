@@ -31,7 +31,7 @@ const STREAM_EVENTS = [
 ] as const;
 
 /**
- * Listen to the gateway's state notifications. Notifications are only a hint
+ * Listen to the workspace's state notifications. Notifications are only a hint
  * to refetch; the workspace response remains the source of truth.
  */
 export function subscribeToWorkspaceEvents(
@@ -51,7 +51,7 @@ export function subscribeToWorkspaceEvents(
 
   const connect = () => {
     if (stopped) return;
-    source = new window.EventSource('/cascade-api/stream');
+    source = new window.EventSource('/cascade-api/simulation/v1/stream');
     const handleChange = () => {
       retryMs = 1000;
       void Promise.resolve(onChange()).catch(() => {});

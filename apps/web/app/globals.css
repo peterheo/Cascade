@@ -391,7 +391,10 @@ h2 {
   background: linear-gradient(145deg, #1b2638, #151e2c);
   color: #edf2fa;
   box-shadow: 0 8px 18px #0003;
-  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    transform 0.2s,
+    box-shadow 0.2s;
 }
 .flow-commitment-node:hover {
   border-color: #8796d8;
@@ -399,7 +402,9 @@ h2 {
 }
 .flow-commitment-node.selected {
   border-color: #8794ff;
-  box-shadow: 0 0 0 3px #6478ff18, 0 12px 24px #0004;
+  box-shadow:
+    0 0 0 3px #6478ff18,
+    0 12px 24px #0004;
 }
 .flow-commitment-node.at-risk {
   border-color: #b48249;
@@ -655,9 +660,6 @@ footer span:last-child {
   color: #8295b0;
   font-size: 0.75rem;
 }
-.no-edge {
-  background: transparent;
-}
 .required-time {
   color: #edb573 !important;
 }
@@ -694,6 +696,12 @@ footer span:last-child {
 .plan-card.previewing {
   border-color: #8794ff;
 }
+.plan-card.recommended {
+  border-color: #c59656;
+  box-shadow:
+    0 0 0 2px #c5965624,
+    0 12px 26px #0003;
+}
 .plan-card.declined {
   opacity: 0.6;
 }
@@ -706,12 +714,30 @@ footer span:last-child {
   color: #97a8c2;
   margin-bottom: 22px;
 }
-.plan-number > span {
+.plan-statuses {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  letter-spacing: 0;
+}
+.plan-statuses > span {
   display: flex;
   align-items: center;
   gap: 5px;
   color: #79d2b0;
-  letter-spacing: 0;
+}
+.plan-statuses .recommendation-badge {
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #c5965680;
+  border-radius: 999px;
+  background: #c5965621;
+  color: #f1c47f;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 .plan-card h3 {
   font-size: 1.25rem;

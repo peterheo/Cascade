@@ -163,6 +163,7 @@ export default function Home() {
     workspace.assisted?.planning.id === planning?.id
       ? workspace.assisted?.comparison
       : null;
+  const recommendedPlanId = comparison?.recommended_plan_id || null;
   const shownWorld = preview?.world || state.world;
   const picked =
     shownWorld.commitments.find((c) => c.id === selected) ||
@@ -698,20 +699,29 @@ export default function Home() {
                     (a) => a.plan_id === p.id && a.status === 'REJECTED',
                   );
                   const stale = p.based_on_version !== state.world.version;
+                  const recommended = p.id === recommendedPlanId;
                   const explanation = comparison?.plans.find(
                     (e) => e.plan_id === p.id,
                   );
                   return (
                     <article
-                      className={`plan-card ${preview?.id === p.id ? 'previewing' : ''} ${rejected ? 'declined' : ''}`}
+                      className={`plan-card ${preview?.id === p.id ? 'previewing' : ''} ${rejected ? 'declined' : ''} ${recommended ? 'recommended' : ''}`}
                       key={p.id}
                     >
                       <div className="plan-number">
                         OPTION {String(i + 1).padStart(2, '0')}
-                        <span>
-                          <ShieldCheck size={13} />
-                          Feasible
-                        </span>
+                        <div className="plan-statuses">
+                          <span>
+                            <ShieldCheck size={13} />
+                            Feasible
+                          </span>
+                          {recommended && (
+                            <span className="recommendation-badge">
+                              <Sparkles size={13} />
+                              Recommended
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <h3>{planTitle(p)}</h3>
                       <p className="plan-description">{planSubtitle(p)}</p>

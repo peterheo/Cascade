@@ -1,13 +1,16 @@
 """Isolated stepwise fixture simulation; never shares state with the gateway API."""
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+import asyncio
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import Field, ValidationError
 
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
 from cascade.execution.service import ExecutionService
+from cascade.observability.events import EventStream
 from cascade.planning.models import SearchPolicy
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
@@ -44,7 +47,28 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
     executor = ExecutionService(service)
+    simulation_stream = EventStream()
+    app.state.simulation_stream = simulation_stream
     demo_event_id = None
+
+    def apply_event(event: Mutation, reason: str, scenario_id: str | None = None):
+        already_applied = event.event_id in service.events
+        result = service.ingest(event)
+        if not already_applied:
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason=reason,
+                event_id=event.event_id,
+            )
+            if result.incident:
+                simulation_stream.publish(
+                    "incident.created",
+                    service.world.version,
+                    incident_id=result.incident.id,
+                    scenario=scenario_id,
+                )
+        return result
 
     @app.get("/v1/workspace")
     def workspace():
@@ -60,24 +84,68 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 "reasoning": reasoner.status() if isinstance(reasoner, NebiusReasoner) else None,
             }
 
+    @app.get("/v1/stream")
+    async def stream(request: Request):
+        """Stream simulation notifications; clients refetch state after each event."""
+        queue = simulation_stream.subscribe()
+        if queue is None:
+            raise HTTPException(503, "too many stream subscribers")
+
+        async def notifications():
+            try:
+                while not await request.is_disconnected():
+                    while queue:
+                        yield queue.popleft().encode()
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(0.25)
+            finally:
+                simulation_stream.unsubscribe(queue)
+
+        return StreamingResponse(
+            notifications(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
     @app.post("/v1/incidents/{incident_id}/approve")
     def approve(incident_id: str, request: ApprovalRequest):
         try:
-            return executor.decide(incident_id, request.plan_id, request.expected_version, True)
+            result = executor.decide(incident_id, request.plan_id, request.expected_version, True)
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason="approval",
+                plan_id=request.plan_id,
+            )
+            return result
         except KeyError as exc:
             raise HTTPException(404, "unknown plan") from exc
 
     @app.post("/v1/incidents/{incident_id}/reject")
     def reject(incident_id: str, request: ApprovalRequest):
         try:
-            return executor.decide(incident_id, request.plan_id, request.expected_version, False)
+            result = executor.decide(incident_id, request.plan_id, request.expected_version, False)
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason="rejection",
+                plan_id=request.plan_id,
+            )
+            return result
         except KeyError as exc:
             raise HTTPException(404, "unknown plan") from exc
 
     @app.post("/v1/recovery-plans/{plan_id}/execute")
     def execute(plan_id: str, request: ExecuteRequest):
         try:
-            return executor.start(plan_id, request.approval_id, request.expected_version)
+            result = executor.start(plan_id, request.approval_id, request.expected_version)
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason="execution.started",
+                execution_id=result.id,
+            )
+            return result
         except KeyError as exc:
             raise HTTPException(404, "unknown plan") from exc
 
@@ -91,14 +159,41 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.post("/v1/executions/{execution_id}/advance")
     def advance(execution_id: str, request: AdvanceRequest):
         try:
-            return executor.advance(execution_id, request.expected_step)
+            result = executor.advance(execution_id, request.expected_step)
+            simulation_stream.publish(
+                "action.completed",
+                service.world.version,
+                execution_id=execution_id,
+                status=result.status,
+                step=request.expected_step,
+            )
+            if result.status == "SUCCEEDED":
+                simulation_stream.publish(
+                    "incident.resolved",
+                    service.world.version,
+                    execution_id=execution_id,
+                )
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason="execution",
+                execution_id=execution_id,
+            )
+            return result
         except KeyError as exc:
             raise HTTPException(404, "unknown execution") from exc
 
     @app.post("/v1/executions/{execution_id}/cancel")
     def cancel(execution_id: str):
         try:
-            return executor.cancel(execution_id)
+            result = executor.cancel(execution_id)
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason="execution.cancelled",
+                execution_id=execution_id,
+            )
+            return result
         except KeyError as exc:
             raise HTTPException(404, "unknown execution") from exc
 
@@ -127,6 +222,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 executor.bases.clear()
                 demo_event_id = None
                 service.audit.append({"type": "demo.reset", "world_version": service.world.version})
+                simulation_stream.publish("state.changed", service.world.version, reason="reset")
                 return {"world": service.world, "assessment": evaluate(service.world)}
 
     @app.exception_handler(ReasoningError)
@@ -197,7 +293,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.post("/v1/events")
     def ingest(event: Mutation):
         try:
-            return service.ingest(event)
+            return apply_event(event, "event")
         except ConflictError as exc:
             raise HTTPException(409, str(exc)) from exc
         except KeyError as exc:
@@ -227,7 +323,15 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.post("/v1/incidents/{incident_id}/replan")
     def plan(incident_id: str, request: PlanRequest):
         try:
-            return service.plan(incident_id, request.expected_version, request.policy)
+            result = service.plan(incident_id, request.expected_version, request.policy)
+            simulation_stream.publish(
+                "state.changed",
+                service.world.version,
+                reason="plan",
+                incident_id=incident_id,
+                search_id=result.id,
+            )
+            return result
         except ConflictError as exc:
             raise HTTPException(409, str(exc)) from exc
         except KeyError as exc:
@@ -252,7 +356,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             if demo_event_id in service.events:
                 return service.events[demo_event_id][1]
             event = delay_event(version=service.world.version)
-            result = ingest(event)
+            result = apply_event(event, "inject", scenario_id)
             demo_event_id = event.event_id
             return result
 

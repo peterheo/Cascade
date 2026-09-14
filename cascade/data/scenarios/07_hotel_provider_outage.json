@@ -17,6 +17,6 @@
   "expect": {
     "planning_status": "BLOCKED",
     "candidates": 0,
-    "severity": "BLACK"
+    "severity_withheld": true
   }
 }

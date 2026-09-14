@@ -78,6 +78,7 @@ export type Planning = {
 export type Incident = {
   id: string;
   status: string;
+  severity: string | null;
   trigger_commitment_id: string;
   affected_commitment_ids: string[];
   violations: Violation[];

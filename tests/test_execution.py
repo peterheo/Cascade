@@ -433,6 +433,34 @@ def test_severity_reflects_what_search_found(disrupted):
     assert classify(degraded) == "YELLOW"
 
 
+def test_severity_is_withheld_until_search_is_exhaustive(disrupted):
+    service, incident, _, _ = disrupted
+    complete = service.plan(incident.id, service.world.version)
+
+    for status in ("BLOCKED", "BUDGET_EXHAUSTED"):
+        assert classify(complete.model_copy(update={"status": status, "candidates": ()})) is None
+    for status in ("NO_FEASIBLE_PLAN", "COMPLETE"):
+        assert classify(complete.model_copy(update={"status": status, "candidates": ()})) == "BLACK"
+
+    non_full = complete.candidates[0].model_copy(
+        update={"intent_quality": {key: 0 for key in complete.candidates[0].intent_quality}}
+    )
+    partial_non_full = complete.model_copy(update={"status": "PARTIAL", "candidates": (non_full,)})
+    complete_non_full = complete.model_copy(
+        update={"status": "COMPLETE", "candidates": (non_full,)}
+    )
+    assert classify(partial_non_full) is None
+    assert classify(complete_non_full) == "RED"
+
+    healthy = demo_planner().plan(demo_world(), incident)
+    assert classify(healthy.model_copy(update={"status": "PARTIAL"})) == "GREEN"
+    degraded = healthy.candidates[0].model_copy(update={"additional_cost": Decimal("40")})
+    assert (
+        classify(healthy.model_copy(update={"status": "PARTIAL", "candidates": (degraded,)}))
+        == "YELLOW"
+    )
+
+
 def test_api_approval_and_execution_flow():
     with TestClient(create_app()) as client:
         incident = client.post("/v1/demo/scenarios/flight_delay/inject").json()["incident"]

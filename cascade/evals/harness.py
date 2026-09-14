@@ -158,7 +158,11 @@ def run_scenario(scenario: Scenario) -> ScenarioOutcome:
             recorder.expect(
                 "min_candidates", True, len(planning.candidates) >= expect.min_candidates
             )
-        recorder.expect("severity", expect.severity, service.incident(result.incident.id).severity)
+        severity = service.incident(result.incident.id).severity
+        if expect.severity_withheld:
+            recorder.expect("severity_withheld", True, severity is None)
+        else:
+            recorder.expect("severity", expect.severity, severity)
         if expect.exhaustion_reported:
             recorder.expect(
                 "exhaustion_reported",

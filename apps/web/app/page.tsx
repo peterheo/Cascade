@@ -11,14 +11,22 @@ import {
   GitBranch,
   LoaderCircle,
   MessageSquareText,
+  Plus,
   Play,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  SlidersHorizontal,
+  Trash2,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@/components/ui/native-select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -32,11 +40,19 @@ import { Progress } from '@/components/ui/progress';
 import { DependencyFlow } from '@/components/cascade-flow';
 import {
   api,
+  createPreference,
+  deletePreference,
   isLocal,
+  listPreferences,
   securitySandbox,
   subscribeToWorkspaceEvents,
 } from '@/lib/cascade-api';
-import type { SandboxDenial, SandboxState } from '@/lib/cascade-api';
+import type {
+  Preference,
+  PreferenceDirective,
+  SandboxDenial,
+  SandboxState,
+} from '@/lib/cascade-api';
 import type {
   Workspace,
   Plan,
@@ -154,7 +170,13 @@ export default function Home() {
       'My flight to Nice on September 11, 2026 now arrives at 19:05 local time instead of 16:10.',
     ),
     [extraction, setExtraction] = useState<Extraction | null>(null),
-    [sandbox, setSandbox] = useState<SandboxState | null>(null);
+    [sandbox, setSandbox] = useState<SandboxState | null>(null),
+    [preferences, setPreferences] = useState<Preference[]>([]),
+    [preferenceText, setPreferenceText] = useState(''),
+    [preferenceDirective, setPreferenceDirective] =
+      useState<PreferenceDirective>('require_intent'),
+    [preferenceValue, setPreferenceValue] = useState('intent_restaurant'),
+    [preferenceBusy, setPreferenceBusy] = useState('');
   const local = useSyncExternalStore(
     () => () => {},
     isLocal,
@@ -228,6 +250,17 @@ export default function Home() {
     };
   }, [local]);
   useEffect(() => {
+    let active = true;
+    void listPreferences()
+      .then((result) => {
+        if (active) setPreferences(result);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [local]);
+  useEffect(() => {
     if (!local) return;
     return subscribeToWorkspaceEvents(() =>
       api<Workspace>('/v1/workspace')
@@ -238,6 +271,45 @@ export default function Home() {
         .catch(() => {}),
     );
   }, [local]);
+  async function addPreference() {
+    const statement = preferenceText.trim();
+    if (!local || !statement || preferenceBusy) return;
+    setPreferenceBusy('Saving preference');
+    setError('');
+    try {
+      const result = await createPreference({
+        statement,
+        directive: preferenceDirective,
+        value: preferenceValue.trim(),
+      });
+      setPreferences((current) => [...current, result]);
+      setPreferenceText('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPreferenceBusy('');
+    }
+  }
+  async function removePreference(item: Preference) {
+    if (
+      !local ||
+      preferenceBusy ||
+      !window.confirm(`Delete this preference?\n\n“${item.statement}”`)
+    )
+      return;
+    setPreferenceBusy('Removing preference');
+    setError('');
+    try {
+      await deletePreference(item.id);
+      setPreferences((current) =>
+        current.filter((preference) => preference.id !== item.id),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPreferenceBusy('');
+    }
+  }
   async function perform(label: string, action: () => Promise<void>) {
     setBusy(label);
     setError('');
@@ -621,6 +693,184 @@ export default function Home() {
                   <ShieldCheck size={18} />
                   Checked with explicit timing rules
                 </div>
+                <details className="preferences-panel">
+                  <summary className="preferences-summary">
+                    <span>
+                      <SlidersHorizontal size={16} />
+                      Preferences
+                    </span>
+                    <span className="preferences-count">
+                      {
+                        preferences.filter((item) => item.status === 'ACTIVE')
+                          .length
+                      }{' '}
+                      active
+                    </span>
+                  </summary>
+                  <div className="preferences-body">
+                    <p className="preferences-intro">
+                      {local
+                        ? 'These explicit rules narrow future recovery plans.'
+                        : 'Examples of preferences you can carry into a connected workspace.'}
+                    </p>
+                    <ul className="preferences-list">
+                      {preferences.map((item) => (
+                        <li key={item.id}>
+                          <div>
+                            <strong>{item.statement}</strong>
+                            <span>
+                              {item.source === 'learned'
+                                ? 'Learned suggestion'
+                                : 'Explicit preference'}{' '}
+                              · {item.status.toLowerCase()}
+                            </span>
+                          </div>
+                          {local && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={`Delete preference: ${item.statement}`}
+                              disabled={!!preferenceBusy}
+                              onClick={() => void removePreference(item)}
+                            >
+                              <Trash2 />
+                            </Button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {local ? (
+                      <form
+                        className="preferences-form"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void addPreference();
+                        }}
+                      >
+                        <label htmlFor="preference-statement">
+                          Add an explicit preference
+                        </label>
+                        <Input
+                          id="preference-statement"
+                          value={preferenceText}
+                          onChange={(event) =>
+                            setPreferenceText(event.target.value)
+                          }
+                          placeholder="e.g. Protect hotel over entertainment"
+                          maxLength={500}
+                          disabled={!!preferenceBusy}
+                        />
+                        <div className="preferences-form-row">
+                          <NativeSelect
+                            aria-label="Preference rule"
+                            value={preferenceDirective}
+                            disabled={!!preferenceBusy}
+                            onChange={(event) => {
+                              const next = event.target
+                                .value as PreferenceDirective;
+                              setPreferenceDirective(next);
+                              setPreferenceValue(
+                                next === 'require_intent'
+                                  ? 'intent_restaurant'
+                                  : next === 'limit_spend'
+                                    ? '210'
+                                    : 'ABANDONED',
+                              );
+                            }}
+                          >
+                            <NativeSelectOption value="require_intent">
+                              Protect an intent
+                            </NativeSelectOption>
+                            <NativeSelectOption value="limit_spend">
+                              Limit spend
+                            </NativeSelectOption>
+                            <NativeSelectOption value="forbid_operator">
+                              Forbid an operator
+                            </NativeSelectOption>
+                          </NativeSelect>
+                          {preferenceDirective === 'require_intent' ? (
+                            <NativeSelect
+                              aria-label="Intent to protect"
+                              value={preferenceValue}
+                              disabled={!!preferenceBusy}
+                              onChange={(event) =>
+                                setPreferenceValue(event.target.value)
+                              }
+                            >
+                              <NativeSelectOption value="intent_hotel">
+                                Hotel
+                              </NativeSelectOption>
+                              <NativeSelectOption value="intent_restaurant">
+                                Dinner
+                              </NativeSelectOption>
+                              <NativeSelectOption value="intent_ticket">
+                                Movie
+                              </NativeSelectOption>
+                              <NativeSelectOption value="intent_transfer">
+                                Transfer
+                              </NativeSelectOption>
+                            </NativeSelect>
+                          ) : preferenceDirective === 'forbid_operator' ? (
+                            <NativeSelect
+                              aria-label="Recovery operator to forbid"
+                              value={preferenceValue}
+                              disabled={!!preferenceBusy}
+                              onChange={(event) =>
+                                setPreferenceValue(event.target.value)
+                              }
+                            >
+                              <NativeSelectOption value="RESCHEDULED">
+                                Reschedule
+                              </NativeSelectOption>
+                              <NativeSelectOption value="SUBSTITUTED">
+                                Substitute
+                              </NativeSelectOption>
+                              <NativeSelectOption value="COMPENSATED">
+                                Compensate
+                              </NativeSelectOption>
+                              <NativeSelectOption value="ABANDONED">
+                                Drop commitment
+                              </NativeSelectOption>
+                            </NativeSelect>
+                          ) : (
+                            <Input
+                              aria-label="Maximum additional spend"
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={preferenceValue}
+                              disabled={!!preferenceBusy}
+                              onChange={(event) =>
+                                setPreferenceValue(event.target.value)
+                              }
+                            />
+                          )}
+                        </div>
+                        <Button
+                          type="submit"
+                          variant="outline"
+                          disabled={
+                            !!preferenceBusy ||
+                            !preferenceText.trim() ||
+                            !preferenceValue.trim()
+                          }
+                        >
+                          {preferenceBusy ? (
+                            <LoaderCircle className="spin" />
+                          ) : (
+                            <Plus />
+                          )}
+                          {preferenceBusy || 'Add preference'}
+                        </Button>
+                      </form>
+                    ) : (
+                      <p className="preferences-demo-note">
+                        Connect a local workspace to add or remove preferences.
+                      </p>
+                    )}
+                  </div>
+                </details>
               </aside>
             </div>
             {execution && (

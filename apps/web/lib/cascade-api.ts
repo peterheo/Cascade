@@ -19,6 +19,94 @@ export type SandboxState = {
   } | null;
   denials: SandboxDenial[];
 };
+export type PreferenceDirective =
+  | 'require_intent'
+  | 'limit_spend'
+  | 'forbid_operator';
+export type Preference = {
+  id: string;
+  statement: string;
+  directive: PreferenceDirective;
+  value: string;
+  source: 'explicit_user' | 'learned';
+  status: 'ACTIVE' | 'SUGGESTED' | 'RETIRED';
+  confidence?: number;
+  evidence_count?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+export type CreatePreference = Pick<
+  Preference,
+  'statement' | 'directive' | 'value'
+>;
+
+const DEMO_PREFERENCES: Preference[] = [
+  {
+    id: 'demo-pref-dinner',
+    statement: 'Protect the celebration dinner when travel changes.',
+    directive: 'require_intent',
+    value: 'intent_restaurant',
+    source: 'explicit_user',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'demo-pref-hotel',
+    statement: 'Protect hotel accommodations over entertainment.',
+    directive: 'require_intent',
+    value: 'intent_hotel',
+    source: 'explicit_user',
+    status: 'ACTIVE',
+  },
+  {
+    id: 'demo-pref-spend',
+    statement: 'Keep additional recovery spend under €210.',
+    directive: 'limit_spend',
+    value: '210',
+    source: 'explicit_user',
+    status: 'ACTIVE',
+  },
+];
+
+async function localRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch('/cascade-api' + path, {
+    ...init,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const payload = (await response.json().catch(() => null)) as {
+    detail?: unknown;
+  } | null;
+  if (!response.ok)
+    throw new Error(
+      typeof payload?.detail === 'string'
+        ? payload.detail
+        : 'The preference could not be saved. Try again.',
+    );
+  return payload as T;
+}
+
+export async function listPreferences(): Promise<Preference[]> {
+  if (!isLocal()) return structuredClone(DEMO_PREFERENCES);
+  return localRequest<Preference[]>('/v1/preferences');
+}
+
+export async function createPreference(
+  input: CreatePreference,
+): Promise<Preference> {
+  if (!isLocal())
+    throw new Error('Preferences can only be changed in a local workspace.');
+  return localRequest<Preference>('/v1/preferences', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deletePreference(id: string): Promise<void> {
+  if (!isLocal())
+    throw new Error('Preferences can only be changed in a local workspace.');
+  await localRequest<null>(`/v1/preferences/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
 import data from './preview-data.json' with { type: 'json' };
 const replay = data as unknown as {
   initial: Workspace;

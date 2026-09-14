@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+@import '@xyflow/react/dist/style.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -346,6 +347,121 @@ h2 {
   background-image: radial-gradient(#37476280 0.8px, transparent 0.8px);
   background-size: 18px 18px;
   padding: 45px 22px 22px;
+}
+.flow-graph-shell {
+  min-width: 0;
+}
+.flow-graph-canvas {
+  height: 390px;
+  width: 100%;
+  background-image: radial-gradient(#37476280 0.8px, transparent 0.8px);
+  background-size: 18px 18px;
+}
+.flow-graph-canvas .react-flow {
+  background: transparent;
+}
+.flow-graph-canvas .react-flow__controls {
+  box-shadow: 0 8px 20px #0004;
+  border: 1px solid #34425a;
+}
+.flow-graph-canvas .react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  background: #141d2b;
+  color: #b6c3d8;
+  border-color: #34425a;
+  fill: #b6c3d8;
+}
+.flow-graph-canvas .react-flow__controls-button:hover {
+  background: #23334c;
+}
+.flow-graph-canvas .react-flow__edge-textbg {
+  fill: #111923;
+}
+.flow-graph-canvas .react-flow__edge-text {
+  fill: #9eacc4;
+}
+.flow-commitment-node {
+  position: relative;
+  width: 172px;
+  min-height: 126px;
+  padding: 0;
+  border: 1px solid #34425a;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #1b2638, #151e2c);
+  color: #edf2fa;
+  box-shadow: 0 8px 18px #0003;
+  transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+.flow-commitment-node:hover {
+  border-color: #8796d8;
+  transform: translateY(-2px);
+}
+.flow-commitment-node.selected {
+  border-color: #8794ff;
+  box-shadow: 0 0 0 3px #6478ff18, 0 12px 24px #0004;
+}
+.flow-commitment-node.at-risk {
+  border-color: #b48249;
+  background: linear-gradient(145deg, #352c27, #211f27);
+}
+.flow-node-button {
+  display: flex;
+  width: 100%;
+  min-height: 124px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.flow-node-button:focus-visible {
+  outline: 2px solid #92a0ff;
+  outline-offset: -3px;
+}
+.flow-node-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: #a0aefe;
+  border-radius: 8px;
+  background: #2a3855;
+}
+.at-risk .flow-node-icon {
+  color: #edb573;
+  background: #5b432e;
+}
+.flow-node-time {
+  margin-top: 3px;
+  font-size: 1.15rem;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.flow-node-button strong {
+  font-size: 0.875rem;
+  font-weight: 550;
+}
+.flow-node-status {
+  color: #a9b8cc;
+  font-size: 0.75rem;
+}
+.at-risk .flow-node-status {
+  color: #efbe7c;
+}
+.flow-commitment-node .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 2px solid #111923;
+  background: #7585cb;
+}
+.flow-commitment-node.at-risk .react-flow__handle {
+  background: #e5ad68;
 }
 .graph-track {
   display: flex;

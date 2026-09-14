@@ -9,17 +9,12 @@ import {
   ChevronRight,
   CircleDot,
   GitBranch,
-  Hotel,
   LoaderCircle,
   MessageSquareText,
-  PlaneLanding,
   Play,
   RotateCcw,
   ShieldCheck,
   Sparkles,
-  Ticket,
-  TramFront,
-  Utensils,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -33,6 +28,7 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
+import { DependencyFlow } from '@/components/cascade-flow';
 import { api, isLocal } from '@/lib/cascade-api';
 import type {
   Workspace,
@@ -46,13 +42,6 @@ import replay from '@/lib/preview-data.json';
 
 const EMPTY_PLANS: Plan[] = [];
 
-const icons: Record<string, typeof PlaneLanding> = {
-  flight: PlaneLanding,
-  transfer: TramFront,
-  hotel: Hotel,
-  restaurant: Utensils,
-  ticket: Ticket,
-};
 const names: Record<string, string> = {
   flight: 'Flight',
   transfer: 'Transfer',
@@ -551,61 +540,14 @@ export default function Home() {
                   )}
                 </div>
                 <div className="graph-canvas">
-                  <div className="graph-track">
-                    {shownWorld.commitments.map((c, i) => {
-                      const Icon = icons[c.kind] || CircleDot;
-                      const atRisk =
-                        !preview &&
-                        conflicts.some((v) =>
-                          v.affected_commitment_ids.includes(c.id),
-                        );
-                      const edge = shownWorld.dependencies.find(
-                        (d) =>
-                          d.from_id === c.id &&
-                          d.to_id === shownWorld.commitments[i + 1]?.id,
-                      );
-                      return (
-                        <div className="graph-stop" key={c.id}>
-                          <button
-                            onClick={() => setSelected(c.id)}
-                            className={`commitment-node ${selected === c.id ? 'selected' : ''} ${atRisk ? 'affected' : ''}`}
-                            aria-pressed={selected === c.id}
-                          >
-                            <span className="node-icon">
-                              <Icon size={22} />
-                            </span>
-                            <span className="node-time">
-                              {time(c.start_at)}
-                            </span>
-                            <strong>{names[c.kind] || c.title}</strong>
-                            <span className="node-state">
-                              {preview
-                                ? 'Proposed'
-                                : atRisk
-                                  ? 'At risk'
-                                  : recovered
-                                    ? 'Verified'
-                                    : 'On track'}
-                            </span>
-                          </button>
-                          {i < shownWorld.commitments.length - 1 && (
-                            <span
-                              className={`connector ${edge ? '' : 'no-edge'}`}
-                              title={edge?.explanation}
-                            >
-                              {edge && <ArrowRight size={15} />}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="graph-footnote">
-                    <CircleDot size={14} />
-                    {preview
-                      ? 'Hypothetical itinerary. Nothing changes until you approve.'
-                      : 'A change travels through these dependencies. Select a commitment to inspect it.'}
-                  </div>
+                  <DependencyFlow
+                    world={shownWorld}
+                    violations={conflicts}
+                    selected={selected}
+                    recovered={recovered}
+                    preview={!!preview}
+                    onSelect={setSelected}
+                  />
                 </div>
               </section>
               <aside className="detail-panel">

@@ -178,6 +178,76 @@ def _blocked(action: ToolAction, decision: CallDecision, reason: str) -> ToolCal
     )
 
 
+def _matches_postcondition(expected: PostCondition, observed: ToolResult) -> bool:
+    if expected.commitment_present:
+        return (
+            observed.observed_start_at == expected.start_at
+            and observed.observed_end_at == expected.end_at
+        )
+    return (
+        observed.observed_start_at is None
+        and observed.observed_end_at is None
+        and observed.refund_amount >= expected.min_refund
+    )
+
+
+def reconcile_raised_write(
+    action: ToolAction,
+    apply_error: Exception,
+    *,
+    observed: ToolResult | None = None,
+    verify_error: Exception | None = None,
+) -> ToolResult:
+    """Classify a write that raised after reading the provider's record back."""
+    apply_detail = f"Provider apply raised {type(apply_error).__name__}."
+    if verify_error is not None:
+        return ToolResult(
+            success=False,
+            provider=action.provider,
+            operation=action.operation,
+            side_effect=True,
+            raw_result_ref=f"error:{action.id}:verify",
+            detail=(
+                f"{apply_detail} Read-back also failed with {type(verify_error).__name__}; "
+                "the external state is unknown and must be reconciled with the provider."
+            ),
+        )
+    if observed is None:
+        raise ValueError("a read-back result or error is required")
+    if not observed.success:
+        return observed.model_copy(
+            update={
+                "success": False,
+                "side_effect": False,
+                "verified": False,
+                "detail": f"{apply_detail} Read-back: {observed.detail} The write did not land.",
+            }
+        )
+    if _matches_postcondition(action.postcondition, observed):
+        return observed.model_copy(
+            update={
+                "success": True,
+                "side_effect": True,
+                "verified": True,
+                "detail": (
+                    f"{apply_detail} Read-back confirmed the postcondition: {observed.detail}"
+                ),
+            }
+        )
+    return observed.model_copy(
+        update={
+            "success": False,
+            "side_effect": True,
+            "verified": False,
+            "detail": (
+                f"{apply_detail} Read-back found a record, but the postcondition did not match: "
+                f"{observed.detail} The external state is uncertain and must be reconciled "
+                "with the provider."
+            ),
+        }
+    )
+
+
 class ToolGateway:
     """The only path to an external effect. Planner and executor never call vendors."""
 
@@ -250,15 +320,13 @@ class ToolGateway:
         try:
             applied = provider.apply(action)
         except Exception as exc:
-            # The write may or may not have landed: report unknown, never success.
-            applied = ToolResult(
-                success=False,
-                provider=action.provider,
-                operation=action.operation,
-                side_effect=True,
-                raw_result_ref=f"error:{action.id}",
-                detail=f"Adapter raised {type(exc).__name__}; the external state is unknown.",
-            )
+            try:
+                observed = provider.verify(action)
+            except Exception as verify_exc:
+                result = reconcile_raised_write(action, exc, verify_error=verify_exc)
+            else:
+                result = reconcile_raised_write(action, exc, observed=observed)
+            return self._authorized_call(action, context, result)
         if not applied.success:
             return self._authorized_call(action, context, applied)
         try:
@@ -288,13 +356,4 @@ class ToolGateway:
 
     @staticmethod
     def _matches(expected: PostCondition, observed: ToolResult) -> bool:
-        if expected.commitment_present:
-            return (
-                observed.observed_start_at == expected.start_at
-                and observed.observed_end_at == expected.end_at
-            )
-        return (
-            observed.observed_start_at is None
-            and observed.observed_end_at is None
-            and observed.refund_amount >= expected.min_refund
-        )
+        return _matches_postcondition(expected, observed)

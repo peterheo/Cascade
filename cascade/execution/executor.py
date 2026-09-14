@@ -258,10 +258,16 @@ class PlanExecutor:
                         note=call.result.detail if call.result else call.reason,
                     )
                 )
-                notes.append(
-                    f"{option.commitment_id} did not reach a verified state; replan from"
-                    " the actual world."
-                )
+                if call.result is not None and call.result.side_effect:
+                    notes.append(
+                        f"{option.commitment_id} external state is uncertain; reconcile with "
+                        "the provider before replanning."
+                    )
+                else:
+                    notes.append(
+                        f"{option.commitment_id} did not reach a verified state; replan from"
+                        " the actual world."
+                    )
                 stopped = True
                 continue
             # Recompute immediately: the rest of the plan is not assumed to still hold.

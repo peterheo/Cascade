@@ -71,7 +71,7 @@ def test_simulation_does_not_adopt_an_unverified_provider_write(ready):
     assert provider.ledger
 
 
-def test_simulation_reports_failed_when_provider_apply_raises(ready):
+def test_simulation_reports_failed_when_provider_apply_did_not_land(ready):
     core, incident, plan, executor = ready
     approval = executor.decide(incident.id, plan.id, 1, True)
     execution = executor.start(plan.id, approval.id, 1)
@@ -86,8 +86,29 @@ def test_simulation_reports_failed_when_provider_apply_raises(ready):
 
     assert result.status == "FAILED"
     assert result.outcomes[0].status == "FAILED"
-    assert result.outcomes[0].side_effect
+    assert result.outcomes[0].side_effect is False
     assert core.world == before
+
+
+def test_simulation_verifies_a_write_that_raises_after_landing(ready):
+    core, incident, plan, executor = ready
+    approval = executor.decide(incident.id, plan.id, 1, True)
+    execution = executor.start(plan.id, approval.id, 1)
+    provider = executor.providers["transfer"]
+    original_apply = provider.apply
+
+    def apply_then_raise(action):
+        original_apply(action)
+        raise TimeoutError("vendor write timed out after confirmation")
+
+    provider.apply = apply_then_raise
+    result = executor.advance(execution.id, 0)
+
+    assert result.status == "RUNNING"
+    assert result.outcomes[0].status == "VERIFIED"
+    assert result.outcomes[0].side_effect
+    assert core.world.version == 2
+    assert len(provider.ledger) == 1
 
 
 def test_stale_plan_cannot_be_approved(ready):

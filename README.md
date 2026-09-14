@@ -129,11 +129,18 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
 - Informed approval: every action named, the exact total acknowledged.
 - Step-by-step execution with pre-checks, postcondition verification, partial-execution
   commits, and mandatory replanning after any failure.
-- Deterministic incident severity, incident resolution, and explicit dismissal.
+- Deterministic incident severity, withheld for inconclusive searches, incident resolution,
+  and explicit dismissal.
+- A projected-time overlap check that flags physically overlapping commitments as a hard
+  violation even without a dependency link or with only a soft link.
+- Read-back after a provider write raises, using the provider record to distinguish a landed
+  write, a write that did not land, and an external state that needs reconciliation.
 - A declarative 29-scenario evaluation suite with reproducible fault injection and
   precision/recall, feasibility, security and degradation metrics.
 - A zero-build product surface: disruption inbox, stable dashboard, blast-radius graph,
   tradeoff comparison, approval gate, and audit/boundary trail.
+- An interactive React Flow dependency graph with live server-sent refresh in the React
+  workspace.
 - Versioned recovery skills that bound the planner: deterministic trigger matching,
   permitted operators, operator ordering, and search limits.
 - Explicit preferences that narrow the search, resolution memory including dismissals,
@@ -158,8 +165,20 @@ permission policy, sandbox profile, injected fault, execution mode — and asser
 should happen. The report gives conflict-detection precision and recall, the share of
 surfaced plans passing the constraint engine, the share of mutation attempts blocked in
 security scenarios, and the share of degradation scenarios that report exhaustion
-instead of a guess. Metrics with no supporting scenarios report `None` rather than a
-flattering default, and the suite is part of `pytest`.
+instead of a guess.
+
+| Measure | Result |
+| --- | ---: |
+| Scenarios | 29 |
+| Passed | 29 |
+| Conflict detection precision | 1.0 |
+| Conflict detection recall | 1.0 |
+| Surfaced plans passing constraints | 1.0 |
+| Unauthorized mutations blocked | 1.0 |
+| Correct exhaustion instead of a guess | 1.0 |
+
+Metrics with no supporting scenarios report `None` rather than a flattering default, and
+the suite is part of `pytest`. These are fixture-suite results, not field measurements.
 
 ## Validate
 
@@ -184,7 +203,8 @@ UI tests assert that every endpoint the page calls exists on the API.
 
 1. PostgreSQL persistence and durable audit storage.
 2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
-3. A preference and memory surface in the UI for what the API already exposes.
+
+## Known limitations
 
 Resource conflicts, authentication, and persistent storage are not implemented yet.
 Execution mutates fixture provider ledgers in this process; no real booking, refund or
@@ -192,6 +212,45 @@ message is ever sent. The sandbox is enforced in-process,
 so it constrains Cascade's executor rather than the operating system. Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness
 refers only to the queried inventory and operators.
+
+The constraint engine's elapsed-time arithmetic uses wall-clock time zone offsets, so a
+chain crossing a DST transition can be judged feasible when it is not. The demo date has
+no transition.
+
+Applying a corrective event does not re-check open incidents, and reconciliation closes an
+incident when its original violations clear without considering new ones.
+
+When the candidate frontier is capped, branches are ranked by additional cost alone, so
+intent-preserving branches may be dropped first.
+
+When an option budget truncates the search and a provider is also down, the planner status
+reports `BUDGET_EXHAUSTED`, hiding the outage.
+
+Two commitments under one intent overwrite each other's quality score rather than taking
+the minimum. Demo intents are one-to-one.
+
+Whether a mid-plan violation can still be repaired is judged only from its last affected
+commitment.
+
+The gateway approval endpoint enforces the echoed total amount but fills the approved action
+set from the server's own proposal.
+
+The overall Nebius timeout equals the per-request timeout, so a hung request consumes the
+whole budget and the second attempt rarely runs. Degradation to the deterministic plan
+still works.
+
+A natural-language event applied at confidence ≥ 0.9 can be steered by injected text into a
+timing change. It is bounded to a typed, versioned, audited time change, with no money or
+booking.
+
+The overlap check adds no travel time between unlinked commitments. Buffers exist only on
+dependency edges.
+
+The dependency graph re-levels only when the set of commitments changes, not when edges
+change under the same set.
+
+The hosted replay fixture has no model comparison or sandbox denials, so the Recommended
+badge and the security callout render only against a local backend.
 
 Package layout follows the design's domain/graph/constraints split. `cascade/service.py`
 is the temporary in-memory orchestration boundary; `apps/api` is the HTTP adapter.

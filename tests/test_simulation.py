@@ -162,3 +162,31 @@ def test_mounted_simulation_keeps_gateway_state_and_approvals_isolated():
         snapshot = client.get("/simulation/v1/workspace").json()
         assert snapshot["planning"]["id"] == planned["id"]
         assert snapshot["approvals"][0]["id"] == approval.json()["id"]
+
+
+def test_simulation_stream_announces_mutations():
+    app = create_app()
+    queue = app.state.simulation_stream.subscribe()
+    with TestClient(app) as client:
+        event = client.post("/v1/demo/scenarios/flight_delay/inject").json()
+        incident_id = event["incident"]["id"]
+        planning = client.post(
+            f"/v1/incidents/{incident_id}/plan", json={"expected_version": 1}
+        ).json()
+        plan = planning["candidates"][0]
+        approval = client.post(
+            f"/v1/incidents/{incident_id}/approve",
+            json={"expected_version": 1, "plan_id": plan["id"]},
+        ).json()
+        execution = client.post(
+            f"/v1/recovery-plans/{plan['id']}/execute",
+            json={"expected_version": 1, "approval_id": approval["id"]},
+        ).json()
+        client.post(
+            f"/v1/executions/{execution['id']}/advance",
+            json={"expected_step": execution["next_step"]},
+        )
+    announced = [notification.type for notification in queue]
+    assert announced[:2] == ["state.changed", "incident.created"]
+    assert "action.completed" in announced
+    assert "state.changed" in announced

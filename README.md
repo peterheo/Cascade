@@ -130,7 +130,7 @@ The plan request optionally accepts `policy`, including `max_additional_cost`,
 - Step-by-step execution with pre-checks, postcondition verification, partial-execution
   commits, and mandatory replanning after any failure.
 - Deterministic incident severity, incident resolution, and explicit dismissal.
-- A declarative 28-scenario evaluation suite with reproducible fault injection and
+- A declarative 29-scenario evaluation suite with reproducible fault injection and
   precision/recall, feasibility, security and degradation metrics.
 - A zero-build product surface: disruption inbox, stable dashboard, blast-radius graph,
   tradeoff comparison, approval gate, and audit/boundary trail.
@@ -153,7 +153,7 @@ uv run cascade-eval --tag security
 uv run cascade-eval --json
 ```
 
-Twenty-eight deterministic scenarios vary one axis each — arrival time, search policy,
+Twenty-nine deterministic scenarios vary one axis each — arrival time, search policy,
 permission policy, sandbox profile, injected fault, execution mode — and assert what
 should happen. The report gives conflict-detection precision and recall, the share of
 surfaced plans passing the constraint engine, the share of mutation attempts blocked in

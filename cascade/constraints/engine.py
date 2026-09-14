@@ -57,4 +57,33 @@ def evaluate(world: World) -> Assessment:
                     explanation=deadline.explanation,
                 )
             )
+    # Hard-edge projection separates ordered pairs; unlinked or soft-ordered pairs can overlap.
+    for index, first in enumerate(world.commitments):
+        for second in world.commitments[index + 1 :]:
+            first_start = starts[first.id]
+            second_start = starts[second.id]
+            first_end = first_start + (first.end_at - first.start_at)
+            second_end = second_start + (second.end_at - second.start_at)
+            if not (first_start < second_end and second_start < first_end):
+                continue
+            earlier, later = sorted(
+                (first, second), key=lambda commitment: (starts[commitment.id], commitment.id)
+            )
+            earlier_start = starts[earlier.id]
+            later_start = starts[later.id]
+            earlier_end = earlier_start + (earlier.end_at - earlier.start_at)
+            lo, hi = sorted((first.id, second.id))
+            violations.append(
+                Violation(
+                    constraint_id=f"overlap:{lo}:{hi}",
+                    affected_commitment_ids=(earlier.id, later.id),
+                    severity="hard",
+                    actual_at=later_start,
+                    required_at=earlier_end,
+                    delay_minutes=(earlier_end - later_start).total_seconds() / 60,
+                    explanation=(
+                        f"{earlier.title} and {later.title} overlap; both cannot be attended."
+                    ),
+                )
+            )
     return Assessment(projected_starts=starts, violations=tuple(violations))

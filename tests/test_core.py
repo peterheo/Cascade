@@ -16,6 +16,128 @@ def test_baseline_is_feasible():
     assert evaluate(demo_world()).violations == ()
 
 
+def test_unlinked_overlapping_commitments_are_a_hard_violation():
+    world = demo_world()
+    ticket = next(c for c in world.commitments if c.id == "ticket").model_copy(
+        update={"start_at": at("19:45"), "end_at": at("21:30")}
+    )
+    world = world.model_copy(
+        update={
+            "commitments": tuple(ticket if c.id == "ticket" else c for c in world.commitments),
+            "dependencies": tuple(d for d in world.dependencies if d.id != "restaurant_to_ticket"),
+        }
+    )
+
+    overlap = [v for v in evaluate(world).violations if v.constraint_id.startswith("overlap:")]
+    assert len(overlap) == 1
+    violation = overlap[0]
+    assert violation.constraint_id == "overlap:restaurant:ticket"
+    assert violation.affected_commitment_ids == ("restaurant", "ticket")
+    assert violation.delay_minutes == 75
+
+
+def test_ordered_overlapping_commitments_do_not_duplicate_an_overlap_violation():
+    world = demo_world()
+    ticket = next(c for c in world.commitments if c.id == "ticket").model_copy(
+        update={"start_at": at("19:45"), "end_at": at("21:30")}
+    )
+    world = world.model_copy(
+        update={"commitments": tuple(ticket if c.id == "ticket" else c for c in world.commitments)}
+    )
+
+    violations = evaluate(world).violations
+    assert not any(v.constraint_id.startswith("overlap:") for v in violations)
+    assert any(v.constraint_id == "restaurant_to_ticket" for v in violations)
+
+
+def test_touching_unlinked_commitments_do_not_overlap():
+    world = demo_world()
+    ticket = next(c for c in world.commitments if c.id == "ticket").model_copy(
+        update={"start_at": at("21:00"), "end_at": at("22:30")}
+    )
+    world = world.model_copy(
+        update={
+            "commitments": tuple(ticket if c.id == "ticket" else c for c in world.commitments),
+            "dependencies": tuple(d for d in world.dependencies if d.id != "restaurant_to_ticket"),
+        }
+    )
+
+    assert not any(v.constraint_id.startswith("overlap:") for v in evaluate(world).violations)
+
+
+def test_soft_ordered_overlapping_commitments_report_both_violations():
+    world = demo_world()
+    ticket = next(c for c in world.commitments if c.id == "ticket").model_copy(
+        update={"start_at": at("19:45"), "end_at": at("21:30")}
+    )
+    world = world.model_copy(
+        update={
+            "commitments": tuple(ticket if c.id == "ticket" else c for c in world.commitments),
+            "dependencies": tuple(
+                d.model_copy(update={"hard": False}) if d.id == "restaurant_to_ticket" else d
+                for d in world.dependencies
+            ),
+        }
+    )
+
+    violations = evaluate(world).violations
+    overlap = next(v for v in violations if v.constraint_id == "overlap:restaurant:ticket")
+    assert overlap.affected_commitment_ids == ("restaurant", "ticket")
+    assert overlap.delay_minutes == 75
+    assert any(
+        v.constraint_id == "restaurant_to_ticket" and v.severity == "soft" for v in violations
+    )
+
+
+def test_projected_shift_detects_an_unlinked_overlap():
+    world = demo_world()
+    world = world.model_copy(
+        update={
+            "dependencies": tuple(d for d in world.dependencies if d.id != "restaurant_to_ticket")
+        }
+    )
+
+    result = CascadeService(world).ingest(delay_event())
+    assert any(v.constraint_id == "overlap:restaurant:ticket" for v in result.assessment.violations)
+
+
+def test_overlap_constraint_id_is_stable_when_start_order_changes():
+    world = demo_world()
+    ticket = next(c for c in world.commitments if c.id == "ticket").model_copy(
+        update={"start_at": at("19:45"), "end_at": at("21:30")}
+    )
+    first = world.model_copy(
+        update={
+            "commitments": tuple(ticket if c.id == "ticket" else c for c in world.commitments),
+            "dependencies": tuple(d for d in world.dependencies if d.id != "restaurant_to_ticket"),
+        }
+    )
+    restaurant = next(c for c in world.commitments if c.id == "restaurant").model_copy(
+        update={"start_at": at("20:00"), "end_at": at("22:00")}
+    )
+    second = world.model_copy(
+        update={
+            "commitments": tuple(
+                restaurant if c.id == "restaurant" else ticket if c.id == "ticket" else c
+                for c in world.commitments
+            ),
+            "dependencies": tuple(d for d in world.dependencies if d.id != "restaurant_to_ticket"),
+        }
+    )
+
+    first_overlap = next(
+        v for v in evaluate(first).violations if v.constraint_id.startswith("overlap:")
+    )
+    second_overlap = next(
+        v for v in evaluate(second).violations if v.constraint_id.startswith("overlap:")
+    )
+    assert (
+        first_overlap.constraint_id == second_overlap.constraint_id == "overlap:restaurant:ticket"
+    )
+    assert first_overlap.affected_commitment_ids == ("restaurant", "ticket")
+    assert second_overlap.affected_commitment_ids == ("ticket", "restaurant")
+
+
 def test_primary_demo_propagates_all_four_levels_without_rebooking():
     service = CascadeService(demo_world())
     result = service.ingest(delay_event())

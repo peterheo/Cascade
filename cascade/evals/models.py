@@ -58,6 +58,7 @@ class Scenario(Record):
     tags: tuple[str, ...] = ()
     # The demo itinerary is the shared baseline; scenarios vary the disruption.
     arrival: str = "19:05"
+    drop_dependencies: tuple[str, ...] = ()
     confidence: float = Field(default=1, ge=0, le=1)
     expected_version: int = 0
     plan: bool = True

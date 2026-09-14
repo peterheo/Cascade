@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from apps.api.main import create_app
 from cascade.constraints.engine import evaluate
 from cascade.demo import at, delay_event, demo_world
-from cascade.domain.models import Deadline, Dependency, SourceRef
+from cascade.domain.models import Commitment, Dependency, Intent, SourceRef
 from cascade.planning.demo import demo_planner
 from cascade.planning.models import ProviderResult, RecoveryOption, SearchPolicy
 from cascade.planning.operators import apply_option
@@ -164,24 +164,54 @@ def test_user_deadline_cannot_be_erased_by_hotel_substitution(disrupted):
     assert result.rejections["invalid_operator"] == 1
 
 
-def test_unrelated_hard_constraint_survives_global_check(disrupted):
+def test_preexisting_unrelated_hard_constraint_survives_global_check(disrupted):
     service, incident = disrupted
+    meeting_intent = Intent(
+        id="intent_meetings",
+        description="Attend the meetings",
+        importance=0.5,
+    )
+    first = Commitment(
+        id="meeting_1",
+        kind="meeting",
+        title="Morning meeting",
+        intent_id=meeting_intent.id,
+        start_at=at("10:00"),
+        end_at=at("12:00"),
+        source=SourceRef(source="explicit_user", external_id="meeting_1"),
+    )
+    second = Commitment(
+        id="meeting_2",
+        kind="meeting",
+        title="Afternoon meeting",
+        intent_id=meeting_intent.id,
+        start_at=at("11:00"),
+        end_at=at("12:30"),
+        source=SourceRef(source="explicit_user", external_id="meeting_2"),
+    )
     world = service.world.model_copy(
         update={
-            "deadlines": (
-                *service.world.deadlines,
-                Deadline(
-                    id="flight_curfew",
-                    commitment_id="flight",
-                    latest_start=at("18:00"),
-                    explanation="User must arrive before 18:00.",
+            "intents": (*service.world.intents, meeting_intent),
+            "commitments": (*service.world.commitments, first, second),
+            "dependencies": (
+                *service.world.dependencies,
+                Dependency(
+                    id="meeting_1_to_meeting_2",
+                    from_id=first.id,
+                    to_id=second.id,
+                    explanation="The meetings cannot overlap.",
                 ),
-            )
+            ),
         }
     )
     result = demo_planner().plan(world, incident)
-    assert result.status == "NO_FEASIBLE_PLAN"
-    assert result.rejections["global_hard_constraint"] > 0
+    assert result.status == "COMPLETE"
+    assert result.candidates
+    assert result.rejections.get("global_hard_constraint", 0) == 0
+    assert all(
+        any(v.constraint_id == "meeting_1_to_meeting_2" for v in plan.assessment.violations)
+        for plan in result.candidates
+    )
 
 
 def test_compensation_preserves_transit_and_lost_intent(disrupted):

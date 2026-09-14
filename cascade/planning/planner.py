@@ -73,6 +73,11 @@ class RecoveryPlanner:
         started = monotonic()
         order = descendants(world, incident.trigger_commitment_id)
         originals = {c.id: c for c in world.commitments}
+        baseline_hard = {
+            violation.constraint_id: violation.delay_minutes
+            for violation in evaluate(world).violations
+            if violation.severity == "hard"
+        }
         frontier = [Branch(world)]
         evidence: list[ProviderResult] = []
         rejections = Counter()
@@ -204,7 +209,14 @@ class RecoveryPlanner:
         candidates = []
         for branch in frontier:
             assessment = evaluate(branch.world)
-            if any(v.severity == "hard" for v in assessment.violations):
+            newly_introduced = [
+                violation
+                for violation in assessment.violations
+                if violation.severity == "hard"
+                and violation.delay_minutes
+                > baseline_hard.get(violation.constraint_id, float("-inf"))
+            ]
+            if newly_introduced:
                 rejections["global_hard_constraint"] += 1
                 continue
             quality = {

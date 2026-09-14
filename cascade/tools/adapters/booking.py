@@ -1,10 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
 
+from cascade.tools.adapters.fixtures import FixtureProvider
 from cascade.tools.gateway import ToolAction, ToolResult
 
 
-class FixtureBookingProvider:
+class FixtureBookingProvider(FixtureProvider):
     """Deterministic mutating adapter over the same fixture inventory the planner read.
 
     The ledger is this process's stand-in for a vendor record. `apply` is keyed by

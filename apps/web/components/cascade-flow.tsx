@@ -213,6 +213,7 @@ export function DependencyFlow({
     [world.commitments],
   );
   const riskIds = useMemo(() => [...atRisk].sort().join('|'), [atRisk]);
+  // The signatures are intentional memo dependencies; SSE refreshes replace these object identities.
   const nodeDataSignature = useMemo(
     () =>
       [
@@ -250,12 +251,16 @@ export function DependencyFlow({
       const currentById = new Map(current.map((node) => [node.id, node]));
       const currentIds = [...currentById.keys()].sort().join('|');
       const idsChanged = currentIds !== commitmentIds;
-      return desiredNodes.map((node) => ({
-        ...node,
-        position: idsChanged
-          ? (layoutById.get(node.id)?.position ?? node.position)
-          : (currentById.get(node.id)?.position ?? node.position),
-      }));
+      return desiredNodes.map((node) => {
+        const currentNode = currentById.get(node.id);
+        return {
+          ...(idsChanged ? {} : currentNode),
+          ...node,
+          position: idsChanged
+            ? (layoutById.get(node.id)?.position ?? node.position)
+            : (currentNode?.position ?? node.position),
+        };
+      });
     });
   }, [commitmentIds, desiredNodes, layoutNodes, setNodes]);
 

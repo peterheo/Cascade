@@ -166,9 +166,6 @@ export function subscribeToWorkspaceEvents(
     };
     for (const eventName of STREAM_EVENTS)
       source.addEventListener(eventName, handleChange);
-    source.onopen = () => {
-      retryMs = 1000;
-    };
     source.onerror = () => {
       source?.close();
       source = null;

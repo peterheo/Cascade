@@ -55,6 +55,13 @@ class ProviderLedgerView(MutableMapping[str, dict]):
     def contains(self, key: str) -> bool:
         return self.backend.contains(self.provider, key)
 
+    def replace(self, key: str, value: dict) -> None:
+        replace = getattr(self.backend, "replace", None)
+        if replace is None:
+            self.backend.set(self.provider, key, value)
+        else:
+            replace(self.provider, key, value)
+
 
 class SqliteLedger:
     """Autocommit ledger; each provider write is durable before apply returns."""
@@ -110,6 +117,19 @@ class SqliteLedger:
         self._connection.execute(
             "INSERT INTO ledger(provider, idempotency_key, body, recorded_at) VALUES (?, ?, ?, ?) "
             "ON CONFLICT(provider, idempotency_key) DO NOTHING",
+            (
+                provider,
+                key,
+                json.dumps(self._encode(value), separators=(",", ":"), ensure_ascii=False),
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    def replace(self, provider: str, key: str, value: dict) -> None:
+        self._connection.execute(
+            "INSERT INTO ledger(provider, idempotency_key, body, recorded_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(provider, idempotency_key) DO UPDATE SET body=excluded.body, "
+            "recorded_at=excluded.recorded_at",
             (
                 provider,
                 key,

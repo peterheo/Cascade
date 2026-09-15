@@ -68,15 +68,25 @@ def precheck_for(action: ToolAction) -> ToolAction:
 class PlanExecutor:
     """Authorize everything first, then execute one verified step at a time."""
 
-    def __init__(self, gateway: ToolGateway):
+    def __init__(self, gateway: ToolGateway, calendar_links: dict[str, dict] | None = None):
         self.gateway = gateway
+        self.calendar_links = {} if calendar_links is None else calendar_links
 
     def actions(
         self, world: World, plan: CandidatePlan
     ) -> tuple[tuple[RecoveryOption, ToolAction | None], ...]:
         kinds = {c.id: c.kind for c in world.commitments}
         return tuple(
-            (option, action_for(plan, option, f"mock_{kinds[option.commitment_id]}"))
+            (
+                option,
+                action_for(
+                    plan,
+                    option,
+                    "icloud"
+                    if option.commitment_id in self.calendar_links
+                    else f"mock_{kinds[option.commitment_id]}",
+                ),
+            )
             for option in plan.actions
         )
 

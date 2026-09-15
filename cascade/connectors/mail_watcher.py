@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 from cascade.connectors.mail import MailCursor, MailFetchError, MailSource
 from cascade.persistence import StateStore
 from cascade.reasoning.models import NaturalEventRequest
+from cascade.reasoning.nebius import ReasoningError
 from cascade.reasoning.service import SemanticService
+from cascade.service import ConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +46,14 @@ class MailWatcher:
         self._next_poll = 0.0
         self.last_poll_at: str | None = None
         self.last_error_class: str | None = None
+        self.last_error_code: str | None = None
         self.processed_count = 0
         loaded = store.load()
         self._messages = dict(loaded.mail_messages) if loaded else {}
+        # Poison tracking is intentionally process-local. A permanent malformed
+        # message is skipped only after three consecutive attempts; transient
+        # provider failures keep the cursor parked for retry.
+        self._poison_failures: dict[tuple[int, int], int] = {}
         saved_cursor = loaded.mail_cursors.get(folder) if loaded else None
         self._cursor = (
             MailCursor(int(saved_cursor["uidvalidity"]), int(saved_cursor["last_uid"]))
@@ -71,6 +78,7 @@ class MailWatcher:
             "folder": self.folder,
             "last_poll_at": self.last_poll_at,
             "last_error_class": self.last_error_class,
+            "last_error_code": self.last_error_code,
             "processed_count": self.processed_count,
             "recent": recent,
         }
@@ -78,6 +86,7 @@ class MailWatcher:
     def _failure(self, exc: Exception, processed: int = 0, skipped: int = 0) -> PollResult:
         self.processed_count += processed
         self.last_error_class = type(exc).__name__
+        self.last_error_code = exc.code if isinstance(exc, ReasoningError) else None
         logger.error("mail poll failed: %s", type(exc).__name__)
         self._interval = min(900, self._interval * 2)
         self._next_poll = time.monotonic() + self._interval
@@ -100,6 +109,31 @@ class MailWatcher:
                 self.folder,
                 {"uidvalidity": cursor.uidvalidity, "last_uid": cursor.last_uid},
             )
+
+    @staticmethod
+    def _is_transient(exc: Exception) -> bool:
+        if isinstance(exc, ConflictError):
+            return True
+        if isinstance(exc, ReasoningError):
+            return exc.code in {"timeout", "network", "unavailable", "5xx", "429"}
+        return isinstance(exc, (TimeoutError, ConnectionError, OSError))
+
+    def _record_failed_message(self, message, digest: str, checkpoint: MailCursor) -> None:
+        body = {
+            "status": "FAILED",
+            "event_id": f"mail_{digest[:24]}",
+            "received_at": message.received_at.astimezone(UTC).isoformat(),
+            "error_class": "permanent_extraction_failure",
+        }
+        with self.store.transaction():
+            self.store.put("mail_message", digest, body)
+            self.store.put(
+                "mail_cursor",
+                self.folder,
+                {"uidvalidity": checkpoint.uidvalidity, "last_uid": checkpoint.last_uid},
+            )
+        self._messages[digest] = body
+        self._cursor = checkpoint
 
     async def poll_once(self) -> PollResult:
         if not self.semantic.privacy.live_inference:
@@ -139,6 +173,27 @@ class MailWatcher:
                 try:
                     result = await self.semantic.extract(request)
                 except Exception as exc:
+                    if isinstance(exc, ReasoningError) and exc.code in {
+                        "not_configured",
+                        "authentication",
+                    }:
+                        # Account-wide failures are retryable but must not consume
+                        # a message's permanent-poison budget or advance its cursor.
+                        return self._failure(exc, processed, skipped)
+                    key = (cursor.uidvalidity, message.uid)
+                    if not self._is_transient(exc):
+                        attempts = self._poison_failures.get(key, 0) + 1
+                        self._poison_failures[key] = attempts
+                        if attempts >= 3:
+                            self._record_failed_message(message, digest, checkpoint)
+                            self._poison_failures.pop(key, None)
+                            processed += 1
+                            seen.add(digest)
+                            continue
+                    else:
+                        # A transient error is retryable and must not consume the
+                        # poison budget for this UID.
+                        self._poison_failures.pop(key, None)
                     return self._failure(exc, processed, skipped)
                 body = {
                     "status": result.status,
@@ -176,6 +231,7 @@ class MailWatcher:
 
         self.processed_count += processed
         self.last_error_class = None
+        self.last_error_code = None
         self._interval = self.poll_seconds
         self._next_poll = time.monotonic() + self._interval
         return PollResult(processed=processed, skipped=skipped)

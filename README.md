@@ -135,6 +135,17 @@ through extraction with confirmation still required; `GET /v1/connectors/mail/st
 the watcher state. Mail credentials are never logged or persisted, and message text is retained
 only when `persist_event_text` is enabled in the process-local privacy settings.
 
+The same iCloud credentials enable the read-only CalDAV synchronizer. It discovers the
+calendar named by `CASCADE_ICLOUD_CALENDAR` (default `Cascade Trip`) and imports timed,
+non-recurring VEVENTs; all-day and recurring entries are counted and skipped. `GET
+/v1/connectors/calendar/status` reports the connector, which runs at startup and then every
+`CASCADE_CALENDAR_POLL_SECONDS` seconds (default 90, clamped to 60–3600). Set
+`CASCADE_GATEWAY_WORLD=empty` for personal mode: demo scenario injection is disabled and the
+gateway starts from an empty world. Calendar writes use the existing owner approval gate,
+conditional PUT/read-back verification, and `POST /v1/calendar/undo/{execution_id}/{step_id}`.
+Calendar DESCRIPTION and LOCATION metadata follow the same `persist_event_text` privacy
+setting as mail; STATUS is safe operational metadata and is retained.
+
 `POST /v1/incidents/{id}/replan` reruns against the requested current version.
 `GET /v1/recovery-plans/{id}` returns a saved candidate and marks it stale after a
 world change. Planning appends audit evidence while leaving commitments untouched.

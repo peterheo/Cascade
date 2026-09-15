@@ -35,6 +35,9 @@ RecordKind = Literal[
     "ledger_orphan",
     "mail_message",
     "mail_cursor",
+    "calendar_link",
+    "calendar_undo",
+    "calendar_metadata",
 ]
 LogStream = Literal["resolution", "audit"]
 
@@ -62,6 +65,9 @@ class PersistedState:
     ledger_orphans: dict[str, dict] = field(default_factory=dict)
     mail_messages: dict[str, dict] = field(default_factory=dict)
     mail_cursors: dict[str, dict] = field(default_factory=dict)
+    calendar_links: dict[str, dict] = field(default_factory=dict)
+    calendar_undos: dict[str, dict] = field(default_factory=dict)
+    calendar_metadata: dict[str, dict] = field(default_factory=dict)
     latest_search_id: str | None = None
 
 
@@ -294,6 +300,12 @@ class SqliteStore:
                     state.mail_messages[row["key"]] = body
                 elif kind == "mail_cursor":
                     state.mail_cursors[row["key"]] = body
+                elif kind == "calendar_link":
+                    state.calendar_links[row["key"]] = body
+                elif kind == "calendar_undo":
+                    state.calendar_undos[row["key"]] = body
+                elif kind == "calendar_metadata":
+                    state.calendar_metadata[row["key"]] = body
                 else:
                     raise ValueError(f"unknown persisted record kind: {kind}")
             for row in self._connection.execute("SELECT stream, body FROM log ORDER BY seq"):
@@ -320,6 +332,9 @@ class SqliteStore:
                 and not state.ledger_orphans
                 and not state.mail_messages
                 and not state.mail_cursors
+                and not state.calendar_links
+                and not state.calendar_undos
+                and not state.calendar_metadata
             ):
                 return None
             return state

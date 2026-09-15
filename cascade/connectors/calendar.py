@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import posixpath
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from urllib.parse import unquote, urljoin, urlsplit
 from zoneinfo import ZoneInfo
@@ -31,6 +31,7 @@ class CalendarConflict(CalendarError):
 class CalendarEvent:
     commitment: Commitment
     link: dict
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,11 @@ def _calendar_event(calendar_data: str, href: str, calendar_href: str, etag: str
     return CalendarEvent(
         commitment=commitment,
         link={"calendar_href": calendar_href, "href": href, "event_uid": uid, "etag": etag},
+        metadata={
+            key: str(event.get(key)).strip()
+            for key in ("STATUS", "LOCATION", "DESCRIPTION")
+            if event.get(key) is not None and str(event.get(key)).strip()
+        },
     )
 
 

@@ -104,8 +104,10 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         service.executions.clear()
         calendar_ids = tuple(service.calendar_links)
         service.calendar_links.clear()
+        service.calendar_metadata.clear()
         for commitment_id in calendar_ids:
             service.store.delete("calendar_link", commitment_id)
+            service.store.delete("calendar_metadata", commitment_id)
         for incident in tuple(service.incidents):
             service.store.delete("incident", incident.id)
         for plan_id in tuple(service.plans):
@@ -163,6 +165,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         gateway.providers["icloud"] = ICloudCalendarProvider(
             calendar_client, store, service.calendar_links, ledger_backend
         )
+        service._detect_ledger_orphans()
     app.state.calendar_watcher = calendar_watcher
     app.state.world_mode = world_mode
 

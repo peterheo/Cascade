@@ -68,6 +68,9 @@ class CascadeService:
         self.gateway = gateway or demo_gateway()
         self.calendar_links: dict[str, dict] = dict(persisted.calendar_links) if persisted else {}
         self.calendar_undos: dict[str, dict] = dict(persisted.calendar_undos) if persisted else {}
+        self.calendar_metadata: dict[str, dict] = (
+            dict(persisted.calendar_metadata) if persisted else {}
+        )
         self.executor = PlanExecutor(self.gateway, calendar_links=self.calendar_links)
         self.permissions = permissions or PermissionPolicy()
         self.skills = load_skills()
@@ -180,7 +183,9 @@ class CascadeService:
                     stale_retained += 1
                 else:
                     self.calendar_links.pop(commitment_id, None)
+                    self.calendar_metadata.pop(commitment_id, None)
                     self.store.delete("calendar_link", commitment_id)
+                    self.store.delete("calendar_metadata", commitment_id)
 
             imported_old = {c.id: c for c in self.world.commitments if c.id in old_ids}
             ordinary = [c for c in self.world.commitments if c.id not in old_ids]
@@ -200,6 +205,8 @@ class CascadeService:
                 )
                 self.calendar_links[commitment_id] = item.link
                 self.store.put("calendar_link", commitment_id, item.link)
+                self.calendar_metadata[commitment_id] = dict(item.metadata)
+                self.store.put("calendar_metadata", commitment_id, item.metadata)
             for commitment_id in retained_ids:
                 if commitment_id in imported_old:
                     merged.append(imported_old[commitment_id])

@@ -177,7 +177,7 @@ export default function Home() {
       useState<PreferenceDirective>('require_intent'),
     [preferenceValue, setPreferenceValue] = useState('intent_restaurant'),
     [preferenceBusy, setPreferenceBusy] = useState('');
-  const local = useSyncExternalStore(
+  const live = useSyncExternalStore(
     () => () => {},
     isLive,
     isLive,
@@ -215,7 +215,7 @@ export default function Home() {
     const result = await api<Workspace>('/v1/workspace');
     setWorkspace(result);
     setConnected(true);
-    if (local)
+    if (live)
       void securitySandbox()
         .then(setSandbox)
         .catch(() => {});
@@ -241,7 +241,7 @@ export default function Home() {
     };
   }, []);
   useEffect(() => {
-    if (!local) return;
+    if (!live) return;
     let active = true;
     void securitySandbox()
       .then((result) => {
@@ -251,7 +251,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [local]);
+  }, [live]);
   useEffect(() => {
     let active = true;
     void listPreferences()
@@ -262,9 +262,9 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [local]);
+  }, [live]);
   useEffect(() => {
-    if (!local) return;
+    if (!live) return;
     return subscribeToWorkspaceEvents(() =>
       api<Workspace>('/v1/workspace')
         .then((result) => {
@@ -273,10 +273,10 @@ export default function Home() {
         })
         .catch(() => {}),
     );
-  }, [local]);
+  }, [live]);
   async function addPreference() {
     const statement = preferenceText.trim();
-    if (!local || !statement || preferenceBusy) return;
+    if (!live || !statement || preferenceBusy) return;
     setPreferenceBusy('Saving preference');
     setError('');
     try {
@@ -295,7 +295,7 @@ export default function Home() {
   }
   async function removePreference(item: Preference) {
     if (
-      !local ||
+      !live ||
       preferenceBusy ||
       !window.confirm(`Delete this preference?\n\n“${item.statement}”`)
     )
@@ -509,7 +509,7 @@ export default function Home() {
         </Link>
         <div className="top-status">
           <i className={`status-dot ${connected ? 'green' : ''}`} />
-          {local
+          {live
             ? workspace.reasoning?.configured
               ? 'Nemotron connected'
               : 'Local workspace'
@@ -539,7 +539,7 @@ export default function Home() {
             </h1>
           </div>
           <div className="heading-actions">
-            {local && (
+            {live && (
               <Button
                 variant="outline"
                 className="secondary-action"
@@ -608,7 +608,7 @@ export default function Home() {
             {!running && !disrupted && <Check size={16} />}
           </span>
         </output>
-        {!local && (
+        {!live && (
           <p className="preview-notice">
             Verified demo replay · explore the full recovery flow with sample
             data. Live event interpretation runs in the connected local
@@ -722,7 +722,7 @@ export default function Home() {
                   </summary>
                   <div className="preferences-body">
                     <p className="preferences-intro">
-                      {local
+                      {live
                         ? 'These explicit rules narrow future recovery plans.'
                         : 'Examples of preferences you can carry into a connected workspace.'}
                     </p>
@@ -738,7 +738,7 @@ export default function Home() {
                               · {item.status.toLowerCase()}
                             </span>
                           </div>
-                          {local && (
+                          {live && (
                             <Button
                               type="button"
                               variant="ghost"
@@ -753,7 +753,7 @@ export default function Home() {
                         </li>
                       ))}
                     </ul>
-                    {local ? (
+                    {live ? (
                       <form
                         className="preferences-form"
                         onSubmit={(event) => {
@@ -981,7 +981,7 @@ export default function Home() {
                     {busy ? <LoaderCircle className="spin" /> : <RotateCcw />}
                     {plans.length ? 'Replan' : 'Find recoveries'}
                   </Button>
-                  {local && workspace.reasoning?.configured && (
+                  {live && workspace.reasoning?.configured && (
                     <Button
                       variant="outline"
                       disabled={!!busy}
@@ -1265,7 +1265,7 @@ export default function Home() {
             You stay in control of consequential changes.
           </span>
           <span>
-            {local ? 'LIVE WORKSPACE' : 'DEMO REPLAY'} · NO REAL BOOKINGS
+            {live ? 'LIVE WORKSPACE' : 'DEMO REPLAY'} · NO REAL BOOKINGS
           </span>
         </footer>
       </main>

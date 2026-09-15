@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { api } from '../lib/cascade-api.ts';
+import { api, isLive } from '../lib/cascade-api.ts';
+
+test('an unset mode uses replay', () => {
+  const mode = process.env.NEXT_PUBLIC_CASCADE_MODE;
+  delete process.env.NEXT_PUBLIC_CASCADE_MODE;
+  try {
+    assert.equal(isLive(), false);
+  } finally {
+    if (mode === undefined) delete process.env.NEXT_PUBLIC_CASCADE_MODE;
+    else process.env.NEXT_PUBLIC_CASCADE_MODE = mode;
+  }
+});
 
 test('all five replay plans require approval and finish without hard conflicts', async () => {
   await api('/v1/demo/reset', {});

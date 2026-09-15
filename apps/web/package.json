@@ -6,8 +6,9 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "NEXT_PUBLIC_CASCADE_MODE=live vinext dev",
     "build": "vinext build",
+    "build:export": "CASCADE_EXPORT=1 NEXT_PUBLIC_CASCADE_MODE=live vinext build && node scripts/fix-export-fonts.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint app lib vite.config.ts",
     "format": "oxfmt",

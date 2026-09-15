@@ -214,6 +214,9 @@ The live Oracle deployment is at https://cascade.150.136.6.100.nip.io. Update it
 `/etc/cascade/cascade.env` on the box; the install and update scripts are in
 `deploy/oracle/`.
 
+The live React workspace is at https://app.cascade.150.136.6.100.nip.io. Build and ship
+it from the repository root with `deploy/oracle/deploy-web.sh`.
+
 ## Known limitations
 
 Resource conflicts, authentication, and persistent storage are not implemented yet.

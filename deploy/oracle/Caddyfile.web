@@ -1,0 +1,15 @@
+app.cascade.150.136.6.100.nip.io {
+    request_body {
+        max_size 1MB
+    }
+    handle_path /cascade-api/* {
+        reverse_proxy 127.0.0.1:8500 {
+            flush_interval -1
+        }
+    }
+    handle {
+        root * /opt/cascade-web
+        try_files {path} {path}.html /index.html
+        file_server
+    }
+}

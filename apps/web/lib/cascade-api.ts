@@ -85,14 +85,14 @@ async function localRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function listPreferences(): Promise<Preference[]> {
-  if (!isLocal()) return structuredClone(DEMO_PREFERENCES);
+  if (!isLive()) return structuredClone(DEMO_PREFERENCES);
   return localRequest<Preference[]>('/v1/preferences');
 }
 
 export async function createPreference(
   input: CreatePreference,
 ): Promise<Preference> {
-  if (!isLocal())
+  if (!isLive())
     throw new Error('Preferences can only be changed in a local workspace.');
   return localRequest<Preference>('/v1/preferences', {
     method: 'POST',
@@ -101,7 +101,7 @@ export async function createPreference(
 }
 
 export async function deletePreference(id: string): Promise<void> {
-  if (!isLocal())
+  if (!isLive())
     throw new Error('Preferences can only be changed in a local workspace.');
   await localRequest<null>(`/v1/preferences/${encodeURIComponent(id)}`, {
     method: 'DELETE',
@@ -124,11 +124,8 @@ const replay = data as unknown as {
   >;
 };
 let preview = structuredClone(replay.initial);
-export function isLocal() {
-  return (
-    typeof window !== 'undefined' &&
-    ['localhost', '127.0.0.1'].includes(window.location.hostname)
-  );
+export function isLive() {
+  return process.env.NEXT_PUBLIC_CASCADE_MODE === 'live';
 }
 
 const STREAM_EVENTS = [
@@ -146,7 +143,7 @@ export function subscribeToWorkspaceEvents(
   onChange: () => void | Promise<void>,
 ): () => void {
   if (
-    !isLocal() ||
+    !isLive() ||
     typeof window === 'undefined' ||
     typeof window.EventSource === 'undefined'
   )
@@ -185,7 +182,7 @@ export function subscribeToWorkspaceEvents(
 }
 
 export async function securitySandbox(): Promise<SandboxState | null> {
-  if (!isLocal()) return null;
+  if (!isLive()) return null;
   const response = await fetch('/cascade-api/v1/security/sandbox');
   const payload = (await response
     .json()
@@ -196,7 +193,7 @@ export async function securitySandbox(): Promise<SandboxState | null> {
 }
 
 export async function api<T>(path: string, body?: unknown): Promise<T> {
-  if (!isLocal()) return structuredClone(previewRequest(path, body)) as T;
+  if (!isLive()) return structuredClone(previewRequest(path, body)) as T;
   const response = await fetch('/cascade-api/simulation' + path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -33,7 +33,7 @@ if [ ! -f /etc/cascade/cascade.env ]; then
     exit 1
 fi
 
-sudo -u cascade env HOME="$repo_dir" UV_CACHE_DIR="$repo_dir/.uv-cache" UV_PYTHON_DOWNLOADS=never UV_PYTHON=/usr/bin/python3.12 "$uv_bin" sync --locked --no-dev
+sudo -u cascade env HOME="$repo_dir" UV_CACHE_DIR="$repo_dir/.uv-cache" UV_PYTHON_DOWNLOADS=never UV_PYTHON=/usr/bin/python3.12 "$uv_bin" --directory "$repo_dir" sync --locked --no-dev
 sudo install -D -m 0644 "$repo_dir/deploy/oracle/cascade.service" "$unit_file"
 sudo systemctl daemon-reload
 sudo systemctl enable --now cascade.service

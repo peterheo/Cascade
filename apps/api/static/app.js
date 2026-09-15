@@ -11,6 +11,7 @@ const state = {
   approval: null,
   execution: null,
   extraction: null,
+  authRole: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -18,13 +19,44 @@ const el = (id) => document.getElementById(id);
 async function call(path, options) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...options,
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/v1/auth/")) showLogin();
     throw new Error(body.detail || `${options?.method || "GET"} ${path} failed`);
   }
   return body;
+}
+
+function showLogin() {
+  el("login").hidden = false;
+  document.body.classList.add("auth-required");
+}
+
+function hideLogin(role) {
+  state.authRole = role;
+  el("login").hidden = true;
+  document.body.classList.remove("auth-required");
+  const roleNode = el("role");
+  roleNode.textContent = role;
+  roleNode.hidden = false;
+  el("logout").hidden = false;
+  for (const id of ["inject", "reset-hint", "read-message", "live-inference"])
+    el(id).disabled = role === "demo";
+}
+
+async function authenticate() {
+  const response = await fetch("/v1/auth/me", { credentials: "same-origin" });
+  if (response.status === 401) {
+    showLogin();
+    return false;
+  }
+  if (!response.ok) throw new Error("Authentication status unavailable");
+  const me = await response.json();
+  hideLogin(me.role);
+  return true;
 }
 
 function toast(message) {
@@ -282,6 +314,7 @@ function renderIncident() {
     });
     chooser.append(menu);
     const button = text("button", "button primary", "Search feasible recoveries");
+    button.disabled = state.authRole === "demo";
     button.addEventListener("click", () => searchRecoveries(button));
     action.append(chooser, button);
     body.append(action);
@@ -360,6 +393,7 @@ function renderPlans() {
       "button",
       state.selected === plan.id ? "Selected" : "Review this option",
     );
+    choose.disabled = state.authRole === "demo";
     choose.addEventListener("click", () => reviewPlan(plan.id));
     card.append(choose);
     body.append(card);
@@ -414,8 +448,10 @@ function renderApproval() {
     text("small", null, "committed if you approve; nothing has happened yet"),
   );
   const approve = text("button", "button primary", "Approve and execute");
+  approve.disabled = state.authRole === "demo";
   approve.addEventListener("click", () => approveAndExecute(approve));
   const reject = text("button", "button danger", "Reject");
+  reject.disabled = state.authRole === "demo";
   reject.addEventListener("click", () => rejectApproval(reject));
   const buttons = text("div", "bar-actions");
   buttons.append(reject, approve);
@@ -516,6 +552,7 @@ function renderExtraction() {
   if (result.mutation && result.status !== "APPLIED") {
     const confirm = text("div", "total");
     const button = text("button", "button primary", "Apply this change");
+    button.disabled = state.authRole === "demo";
     button.addEventListener("click", () => confirmExtraction(button));
     confirm.append(
       text("small", null, "The model proposed it. Applying it is your decision."),
@@ -600,6 +637,10 @@ async function refresh() {
 }
 
 async function guard(button, work) {
+  if (state.authRole === "demo") {
+    toast("Demo accounts have read-only gateway access.");
+    return;
+  }
   const label = button?.textContent;
   if (button) {
     button.disabled = true;
@@ -726,7 +767,7 @@ async function confirmExtraction(button) {
 
 function listen() {
   // Notifications say what changed; state still comes from the versioned endpoints.
-  const source = new EventSource("/v1/stream");
+  const source = new EventSource("/v1/stream", { withCredentials: true });
   let pending = null;
   source.onmessage = null;
   for (const name of [
@@ -760,7 +801,36 @@ el("live-inference").addEventListener("change", (event) => {
     toast(error.message);
   });
 });
-renderReasoningStatus();
-refresh()
-  .then(listen)
+el("login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const password = el("login-password").value;
+  const submit = form.querySelector("button[type=submit]");
+  submit.disabled = true;
+  el("login-error").hidden = true;
+  try {
+    const result = await call("/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+    form.reset();
+    hideLogin(result.role);
+    await renderReasoningStatus();
+    await refresh();
+    listen();
+  } catch (error) {
+    const message = el("login-error");
+    message.textContent = error.message;
+    message.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
+});
+el("logout").addEventListener("click", async () => {
+  await call("/v1/auth/logout", { method: "POST" }).catch(() => {});
+  state.authRole = null;
+  showLogin();
+});
+authenticate()
+  .then((ok) => (ok ? Promise.all([renderReasoningStatus(), refresh()]).then(listen) : null))
   .catch((error) => toast(error.message));

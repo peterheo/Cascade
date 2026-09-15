@@ -39,6 +39,11 @@ export type PrivacySettings = {
   live_inference: boolean;
   persist_event_text: boolean;
 };
+export type AuthState = {
+  authenticated: boolean;
+  role: 'owner' | 'demo' | null;
+  expires_at?: number;
+};
 export type CreatePreference = Pick<
   Preference,
   'statement' | 'directive' | 'value'
@@ -74,18 +79,41 @@ const DEMO_PREFERENCES: Preference[] = [
 async function localRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch('/cascade-api' + path, {
     ...init,
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
   });
   const payload = (await response.json().catch(() => null)) as {
     detail?: unknown;
   } | null;
-  if (!response.ok)
-    throw new Error(
+  if (!response.ok) {
+    const error = new Error(
       typeof payload?.detail === 'string'
         ? payload.detail
         : 'The preference could not be saved. Try again.',
     );
+    (error as Error & { status?: number }).status = response.status;
+    throw error;
+  }
   return payload as T;
+}
+
+export async function getAuthMe(): Promise<AuthState> {
+  if (!isLive()) return { authenticated: true, role: 'owner' };
+  return localRequest<AuthState>('/simulation/v1/auth/me');
+}
+
+export async function login(password: string): Promise<AuthState> {
+  if (!isLive()) return { authenticated: true, role: 'owner' };
+  const result = await localRequest<{ role: 'owner' | 'demo' }>(
+    '/simulation/v1/auth/login',
+    { method: 'POST', body: JSON.stringify({ password }) },
+  );
+  return { authenticated: true, role: result.role };
+}
+
+export async function logout(): Promise<void> {
+  if (!isLive()) return;
+  await localRequest('/simulation/v1/auth/logout', { method: 'POST' });
 }
 
 export async function listPreferences(): Promise<Preference[]> {
@@ -176,7 +204,9 @@ export function subscribeToWorkspaceEvents(
 
   const connect = () => {
     if (stopped) return;
-    source = new window.EventSource('/cascade-api/simulation/v1/stream');
+    source = new window.EventSource('/cascade-api/simulation/v1/stream', {
+      withCredentials: true,
+    });
     const handleChange = () => {
       retryMs = 1000;
       void Promise.resolve(onChange()).catch(() => {});
@@ -203,7 +233,9 @@ export function subscribeToWorkspaceEvents(
 
 export async function securitySandbox(): Promise<SandboxState | null> {
   if (!isLive()) return null;
-  const response = await fetch('/cascade-api/v1/security/sandbox');
+  const response = await fetch('/cascade-api/v1/security/sandbox', {
+    credentials: 'same-origin',
+  });
   const payload = (await response
     .json()
     .catch(() => null)) as SandboxState | null;
@@ -216,18 +248,22 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
   if (!isLive()) return structuredClone(previewRequest(path, body)) as T;
   const response = await fetch('/cascade-api/simulation' + path, {
     method: body === undefined ? 'GET' : 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = (await response.json().catch(() => null)) as {
     detail?: unknown;
   } | null;
-  if (!response.ok)
+  if (!response.ok) {
+    if (response.status === 401 && typeof window !== 'undefined')
+      window.dispatchEvent(new Event('cascade-auth-required'));
     throw new Error(
       typeof payload?.detail === 'string'
         ? payload.detail
         : 'The workspace could not complete this request. Refresh and try again.',
     );
+  }
   return payload as T;
 }
 function previewRequest(path: string, body: unknown) {

@@ -1,5 +1,11 @@
 'use client';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type SyntheticEvent,
+} from 'react';
 import Link from 'next/link';
 import {
   Activity,
@@ -42,8 +48,11 @@ import {
   api,
   createPreference,
   deletePreference,
+  getAuthMe,
   getPrivacy,
   isLive,
+  login,
+  logout,
   listPreferences,
   securitySandbox,
   subscribeToWorkspaceEvents,
@@ -53,6 +62,7 @@ import type {
   Preference,
   PreferenceDirective,
   PrivacySettings,
+  AuthState,
   SandboxDenial,
   SandboxState,
 } from '@/lib/cascade-api';
@@ -182,10 +192,19 @@ function ManifestDetails({ manifest }: { manifest: ContextManifest }) {
 }
 
 export default function Home() {
+  const live = useSyncExternalStore(
+    () => () => {},
+    isLive,
+    isLive,
+  );
   const [workspace, setWorkspace] = useState<Workspace>(
       replay.initial as unknown as Workspace,
     ),
     [connected, setConnected] = useState(false),
+    [auth, setAuth] = useState<AuthState | null>(null),
+    [password, setPassword] = useState(''),
+    [authBusy, setAuthBusy] = useState(false),
+    [authError, setAuthError] = useState(''),
     [busy, setBusy] = useState(''),
     [error, setError] = useState(''),
     [selected, setSelected] = useState('flight'),
@@ -209,12 +228,8 @@ export default function Home() {
       useState<PreferenceDirective>('require_intent'),
     [preferenceValue, setPreferenceValue] = useState('intent_restaurant'),
     [preferenceBusy, setPreferenceBusy] = useState('');
-  const live = useSyncExternalStore(
-    () => () => {},
-    isLive,
-    isLive,
-  );
   const cancelRef = useRef(false);
+  const demoReadonly = live && auth?.role === 'demo';
   const state = workspace.state,
     conflicts = state.assessment.violations,
     disrupted = conflicts.length > 0;
@@ -257,6 +272,29 @@ export default function Home() {
     return result;
   }
   useEffect(() => {
+    if (!live) return;
+    let active = true;
+    void getAuthMe()
+      .then((result) => {
+        if (!active) return;
+        setAuth(result);
+      })
+      .catch((e) => {
+        if (active && (e as Error & { status?: number }).status === 401)
+          setAuth({ authenticated: false, role: null });
+      });
+    return () => {
+      active = false;
+    };
+  }, [live]);
+  useEffect(() => {
+    if (!live || typeof window === 'undefined') return;
+    const requireAuth = () => setAuth({ authenticated: false, role: null });
+    window.addEventListener('cascade-auth-required', requireAuth);
+    return () => window.removeEventListener('cascade-auth-required', requireAuth);
+  }, [live]);
+  useEffect(() => {
+    if (live && !auth?.authenticated) return;
     let active = true;
     void api<Workspace>('/v1/workspace')
       .then((result) => {
@@ -274,7 +312,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [live, auth?.authenticated]);
   useEffect(() => {
     if (!live) return;
     let active = true;
@@ -364,6 +402,7 @@ export default function Home() {
     }
   }
   async function toggleLiveInference(enabled: boolean) {
+    if (demoReadonly) return;
     const previous = privacy;
     setPrivacy((current) => ({ ...current, live_inference: enabled }));
     try {
@@ -372,6 +411,27 @@ export default function Home() {
       setPrivacy(previous);
       setError((e as Error).message);
     }
+  }
+  async function signIn(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!password || authBusy) return;
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const result = await login(password);
+      setAuth(result);
+      setPassword('');
+      await refresh();
+    } catch (e) {
+      setAuthError((e as Error).message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+  async function signOut() {
+    await logout().catch(() => {});
+    setAuth({ authenticated: false, role: null });
+    setWorkspace(replay.initial as unknown as Workspace);
   }
   async function perform(label: string, action: () => Promise<void>) {
     setBusy(label);
@@ -560,6 +620,30 @@ export default function Home() {
     });
     return () => lifecycle.abort();
   }, []);
+  if (live && auth?.authenticated === false)
+    return (
+      <main className="login-screen">
+        <form className="login-card" onSubmit={signIn}>
+          <p className="eyebrow">CASCADE PERSONAL AI</p>
+          <h1>Sign in to your workspace</h1>
+          <p>Use the owner password or the read-only demo login.</p>
+          <label htmlFor="cascade-password">Password</label>
+          <Input
+            id="cascade-password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            disabled={authBusy}
+          />
+          {authError && <p className="error-banner" role="alert">{authError}</p>}
+          <Button type="submit" disabled={authBusy || !password}>
+            {authBusy ? <LoaderCircle className="spin" /> : null}
+            {authBusy ? 'Signing in…' : 'Sign in'}
+          </Button>
+        </form>
+      </main>
+    );
   return (
     <div className="workspace">
       <header className="topbar">
@@ -577,6 +661,14 @@ export default function Home() {
               : 'Local workspace'
             : 'Interactive demo'}
           <span className="avatar">CH</span>
+          {live && auth?.authenticated && (
+            <>
+              <span className="role-pill">{auth.role}</span>
+              <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+                Log out
+              </Button>
+            </>
+          )}
         </div>
       </header>
       <main>
@@ -613,6 +705,7 @@ export default function Home() {
                 <input
                   type="checkbox"
                   checked={privacy.live_inference}
+                  disabled={demoReadonly}
                   onChange={(event) =>
                     void toggleLiveInference(event.target.checked)
                   }
@@ -626,7 +719,7 @@ export default function Home() {
               <Button
                 variant="outline"
                 className="secondary-action"
-                disabled={!!busy || running}
+                disabled={!!busy || running || demoReadonly}
                 onClick={() => {
                   setExtraction(null);
                   setEventOpen(true);
@@ -639,7 +732,7 @@ export default function Home() {
             {!disrupted && !recovered ? (
               <Button
                 className="primary-action"
-                disabled={!connected || !!busy}
+                disabled={!connected || !!busy || demoReadonly}
                 onClick={inject}
               >
                 {busy ? <LoaderCircle className="spin" /> : <Play />}
@@ -649,7 +742,7 @@ export default function Home() {
               <Button
                 variant="outline"
                 className="secondary-action"
-                disabled={!!busy || running}
+                disabled={!!busy || running || demoReadonly}
                 onClick={reset}
               >
                 <RotateCcw />
@@ -827,7 +920,7 @@ export default function Home() {
                               variant="ghost"
                               size="icon-xs"
                               aria-label={`Delete preference: ${item.statement}`}
-                              disabled={!!preferenceBusy}
+                              disabled={!!preferenceBusy || demoReadonly}
                               onClick={() => void removePreference(item)}
                             >
                               <Trash2 />
@@ -855,13 +948,13 @@ export default function Home() {
                           }
                           placeholder="e.g. Protect hotel over entertainment"
                           maxLength={500}
-                          disabled={!!preferenceBusy}
+                          disabled={!!preferenceBusy || demoReadonly}
                         />
                         <div className="preferences-form-row">
                           <NativeSelect
                             aria-label="Preference rule"
                             value={preferenceDirective}
-                            disabled={!!preferenceBusy}
+                            disabled={!!preferenceBusy || demoReadonly}
                             onChange={(event) => {
                               const next = event.target
                                 .value as PreferenceDirective;
@@ -889,7 +982,7 @@ export default function Home() {
                             <NativeSelect
                               aria-label="Intent to protect"
                               value={preferenceValue}
-                              disabled={!!preferenceBusy}
+                              disabled={!!preferenceBusy || demoReadonly}
                               onChange={(event) =>
                                 setPreferenceValue(event.target.value)
                               }
@@ -911,7 +1004,7 @@ export default function Home() {
                             <NativeSelect
                               aria-label="Recovery operator to forbid"
                               value={preferenceValue}
-                              disabled={!!preferenceBusy}
+                              disabled={!!preferenceBusy || demoReadonly}
                               onChange={(event) =>
                                 setPreferenceValue(event.target.value)
                               }
@@ -936,7 +1029,7 @@ export default function Home() {
                               min="0"
                               step="1"
                               value={preferenceValue}
-                              disabled={!!preferenceBusy}
+                              disabled={!!preferenceBusy || demoReadonly}
                               onChange={(event) =>
                                 setPreferenceValue(event.target.value)
                               }
@@ -948,6 +1041,7 @@ export default function Home() {
                           variant="outline"
                           disabled={
                             !!preferenceBusy ||
+                            demoReadonly ||
                             !preferenceText.trim() ||
                             !preferenceValue.trim()
                           }
@@ -1030,12 +1124,13 @@ export default function Home() {
                   <div className="execution-controls">
                     <Button
                       variant="outline"
+                      disabled={demoReadonly}
                       onClick={() => cancel().catch((e) => setError(e.message))}
                     >
                       Cancel remaining
                     </Button>
                     {!busy && (
-                      <Button onClick={() => drive(execution)}>
+                      <Button disabled={demoReadonly} onClick={() => drive(execution)}>
                         Continue simulation
                       </Button>
                     )}
@@ -1056,7 +1151,7 @@ export default function Home() {
                 <div className="heading-actions">
                   <Button
                     variant="outline"
-                    disabled={!!busy}
+                    disabled={!!busy || demoReadonly}
                     onClick={() =>
                       perform('Comparing recoveries', () => planCurrent())
                     }
@@ -1067,7 +1162,7 @@ export default function Home() {
                   {live && workspace.reasoning?.configured && (
                     <Button
                       variant="outline"
-                      disabled={!!busy}
+                      disabled={!!busy || demoReadonly}
                       onClick={() =>
                         perform('Nemotron is comparing tradeoffs', () =>
                           planCurrent(true),
@@ -1187,7 +1282,7 @@ export default function Home() {
                           Preview itinerary
                         </Button>
                         <Button
-                          disabled={!!busy || stale || rejected}
+                          disabled={!!busy || stale || rejected || demoReadonly}
                           onClick={() => setReview(p)}
                         >
                           {rejected
@@ -1420,12 +1515,12 @@ export default function Home() {
                 payment will change.
               </p>
               <div className="dialog-actions">
-                <Button variant="ghost" disabled={!!busy} onClick={reject}>
+                <Button variant="ghost" disabled={!!busy || demoReadonly} onClick={reject}>
                   Decline this option
                 </Button>
                 <Button
                   className="primary-action"
-                  disabled={!!busy}
+                  disabled={!!busy || demoReadonly}
                   onClick={approve}
                 >
                   {busy ? <LoaderCircle className="spin" /> : <Check />}Approve
@@ -1460,7 +1555,7 @@ export default function Home() {
             }}
             rows={4}
           />
-          <Button disabled={!!busy || !eventText.trim()} onClick={interpret}>
+          <Button disabled={!!busy || !eventText.trim() || demoReadonly} onClick={interpret}>
             {busy ? <LoaderCircle className="spin" /> : <Sparkles />}Interpret
             update
           </Button>
@@ -1480,7 +1575,7 @@ export default function Home() {
                     confidence{' '}
                     {Math.round(extraction.extraction.confidence * 100)}%
                   </p>
-                  <Button disabled={!!busy} onClick={confirmEvent}>
+                  <Button disabled={!!busy || demoReadonly} onClick={confirmEvent}>
                     Confirm timing update
                     <Check />
                   </Button>

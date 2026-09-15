@@ -4,7 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import Field, ValidationError
 
@@ -20,6 +20,7 @@ from cascade.planning.models import SearchPolicy
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
 from cascade.reasoning.service import SemanticService
+from cascade.security.auth import AuthManager
 from cascade.service import CascadeService, ConflictError
 
 
@@ -45,8 +46,12 @@ class AdvanceRequest(Record):
 
 
 def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
+    auth = AuthManager("simulation")
     app = FastAPI(
-        title="Cascade", version="0.4.0", description="Deterministic recovery with Nemotron"
+        title="Cascade",
+        version="0.4.0",
+        description="Deterministic recovery with Nemotron",
+        dependencies=[Depends(auth.dependency)],
     )
     db_path = os.environ.get("CASCADE_SIMULATION_DB")
     store = (
@@ -65,6 +70,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     executor = ExecutionService(service)
     simulation_stream = EventStream()
     app.state.service = service
+    app.state.auth = auth
+    auth.register_routes(app)
     app.state.simulation_stream = simulation_stream
     register_privacy_routes(app, semantic)
     demo_event_id = None

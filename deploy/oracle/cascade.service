@@ -23,6 +23,7 @@ StateDirectoryMode=0700
 Environment=CASCADE_DB=/var/lib/cascade/gateway.db
 Environment=CASCADE_SIMULATION_DB=/var/lib/cascade/simulation.db
 Environment=CASCADE_LEDGER_DB=/var/lib/cascade/ledger.db
+Environment=CASCADE_AUTH_REQUIRED=1
 ReadWritePaths=/opt/cascade /var/lib/cascade
 
 [Install]

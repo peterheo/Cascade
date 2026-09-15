@@ -438,12 +438,12 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         execution = service.executions.get(execution_id)
         if execution is None:
             raise HTTPException(404, "unknown execution")
-        provider = gateway.providers.get("icloud")
-        if provider is None or not hasattr(provider, "undo"):
-            raise HTTPException(409, "iCloud calendar is not enabled")
         step = next((item for item in execution.steps if item.id == step_id), None)
         if step is None or step.call is None or step.call.action.provider != "icloud":
             raise HTTPException(404, "unknown calendar step")
+        provider = gateway.providers.get("icloud")
+        if provider is None or not hasattr(provider, "undo"):
+            raise HTTPException(409, "iCloud calendar is not enabled")
         try:
             outcome = provider.undo(step.call.action.idempotency_key)
             service.record_calendar_undo(execution_id, step_id, outcome)

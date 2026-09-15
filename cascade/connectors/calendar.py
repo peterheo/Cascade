@@ -179,6 +179,17 @@ def _replace_datetime(event: Event, name: str, value: datetime) -> None:
         event[name] = vDatetime(value)
 
 
+def _validate_event_timezone(event: Event) -> None:
+    for name in ("DTSTART", "DTEND"):
+        prop = event.get(name)
+        tzid = prop.params.get("TZID") if prop is not None else None
+        if tzid:
+            try:
+                ZoneInfo(str(tzid))
+            except (KeyError, ValueError) as exc:
+                raise UnsupportedTimezone("unsupported_timezone") from exc
+
+
 class ICloudCalendarClient:
     def __init__(
         self,
@@ -382,6 +393,10 @@ class ICloudCalendarProvider:
             return self._result(
                 action, success=False, detail="VEVENT missing after read-back", href=href
             )
+        try:
+            _validate_event_timezone(event)
+        except UnsupportedTimezone:
+            return self._result(action, success=False, detail="unsupported_timezone", href=href)
         link = self.links.get(action.commitment_id)
         if link and str(event.get("UID", "")).strip() != str(link.get("event_uid", "")):
             return self._result(
@@ -442,6 +457,7 @@ class ICloudCalendarProvider:
             event = next((item for item in parsed.walk() if item.name == "VEVENT"), None)
             if event is None:
                 raise CalendarError("VEVENT missing")
+            _validate_event_timezone(event)
             if str(event.get("UID", "")).strip() != str(link.get("event_uid", "")):
                 raise CalendarError("calendar event UID does not match the imported link")
             start_prop = event.get("DTSTART")

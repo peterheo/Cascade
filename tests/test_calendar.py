@@ -1,4 +1,7 @@
+from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -6,9 +9,13 @@ from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
 from cascade.connectors.calendar import (
+    CalendarError,
     CalendarEvent,
+    CalendarSnapshot,
+    CalendarWatcher,
     ICloudCalendarClient,
     ICloudCalendarProvider,
+    _validate_discovered_url,
 )
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Commitment, SourceRef, World
@@ -32,6 +39,22 @@ DTEND:20260915T130000Z
 END:VEVENT
 END:VCALENDAR
 """
+
+
+def calendar_action(*, key="calendar-step", start_hour=14, end_hour=15):
+    return build_action(
+        plan_id="plan",
+        commitment_id="ical_one",
+        provider="icloud",
+        operation="reschedule",
+        idempotency_key=key,
+        postcondition=PostCondition(
+            commitment_present=True,
+            start_at=datetime(2026, 9, 15, start_hour, tzinfo=UTC),
+            end_at=datetime(2026, 9, 15, end_hour, tzinfo=UTC),
+        ),
+        description="Move meeting",
+    )
 
 
 def test_caldav_discovery_imports_timed_events_and_counts_skips():
@@ -82,6 +105,42 @@ def test_caldav_discovery_imports_timed_events_and_counts_skips():
     event = snapshot.events[0]
     assert event.commitment.id.startswith("ical_")
     assert set(event.link) == {"calendar_href", "href", "event_uid", "etag"}
+
+
+def test_discovered_icloud_urls_allow_only_https_default_port_and_443():
+    normalized = _validate_discovered_url("https://p01-caldav.icloud.com:443/principal")
+    assert normalized == "https://p01-caldav.icloud.com/principal"
+    with pytest.raises(CalendarError):
+        _validate_discovered_url("https://p01-caldav.icloud.com:8443/principal")
+    with pytest.raises(CalendarError):
+        _validate_discovered_url("http://evil.test/principal")
+
+
+def test_discovery_refuses_evil_principal_before_following_it():
+    requested = []
+
+    def handler(request):
+        requested.append(str(request.url))
+        if str(request.url) == "https://caldav.icloud.com/":
+            return httpx.Response(
+                207,
+                text=(
+                    '<multistatus xmlns="DAV:"><response><propstat><prop>'
+                    "<current-user-principal><href>http://evil.test/</href></current-user-principal>"
+                    "</prop></propstat></response></multistatus>"
+                ),
+                request=request,
+            )
+        raise AssertionError("unsafe host was contacted")
+
+    client = ICloudCalendarClient(
+        "u",
+        "p",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(CalendarError, match="unsafe URL"):
+        client.list_events()
+    assert requested == ["https://caldav.icloud.com/"]
 
 
 def test_calendar_sync_is_idempotent_and_personal_mode_blocks_demo(monkeypatch):
@@ -214,6 +273,82 @@ def test_calendar_provider_refuses_conflict_and_unknown_timezone_before_put():
     assert not result.success and not result.side_effect and result.detail == "unsupported_timezone"
 
 
+def test_calendar_duration_write_keeps_equal_duration_and_replaces_changed_duration():
+    duration_ics = ICS.replace("DTEND:20260915T130000Z\n", "DURATION:PT1H\n")
+    state = {"body": duration_ics, "etag": '"1"'}
+    puts = []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, text=state["body"], headers={"ETag": state["etag"]}, request=request
+            )
+        puts.append(request.content.decode())
+        state["body"] = request.content.decode()
+        state["etag"] = f'"{len(puts) + 1}"'
+        return httpx.Response(204, headers={"ETag": state["etag"]}, request=request)
+
+    client = ICloudCalendarClient(
+        "u", "p", base_url="https://caldav.test/home/", transport=httpx.MockTransport(handler)
+    )
+    client.calendar_href = "https://caldav.test/home/"
+    links = {
+        "ical_one": {
+            "calendar_href": client.calendar_href,
+            "href": "https://caldav.test/home/one.ics",
+            "event_uid": "event-1@example.test",
+            "etag": '"1"',
+        }
+    }
+    provider = ICloudCalendarProvider(client, MemoryStore(), links)
+    assert provider.apply(calendar_action(key="duration-equal")).success
+    assert "DURATION:PT1H" in puts[0] and "DTEND" not in puts[0]
+
+    state["body"] = duration_ics
+    state["etag"] = '"3"'
+    changed = calendar_action(key="duration-changed", end_hour=16)
+    assert provider.apply(changed).success
+    assert "DURATION" not in puts[1] and "DTEND:20260915T160000Z" in puts[1]
+
+
+def test_calendar_known_iana_tzid_round_trips_without_utc_wall_time_corruption():
+    tz_ics = ICS.replace(
+        "DTSTART:20260915T120000Z\nDTEND:20260915T130000Z",
+        "DTSTART;TZID=America/New_York:20260915T120000\n"
+        "DTEND;TZID=America/New_York:20260915T130000",
+    )
+    state = {"body": tz_ics, "etag": '"1"'}
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, text=state["body"], headers={"ETag": state["etag"]}, request=request
+            )
+        state["body"] = request.content.decode()
+        state["etag"] = '"2"'
+        return httpx.Response(204, headers={"ETag": state["etag"]}, request=request)
+
+    client = ICloudCalendarClient(
+        "u", "p", base_url="https://caldav.test/home/", transport=httpx.MockTransport(handler)
+    )
+    client.calendar_href = "https://caldav.test/home/"
+    links = {
+        "ical_one": {
+            "calendar_href": client.calendar_href,
+            "href": "https://caldav.test/home/one.ics",
+            "event_uid": "event-1@example.test",
+            "etag": '"1"',
+        }
+    }
+    provider = ICloudCalendarProvider(client, MemoryStore(), links)
+    action = calendar_action(key="iana", start_hour=14, end_hour=15)
+    assert provider.apply(action).success
+    assert "TZID=America/New_York" in state["body"]
+    observed = provider.verify(action)
+    assert observed.success
+    assert observed.observed_start_at.tzinfo == ZoneInfo("America/New_York")
+
+
 def test_calendar_provider_refreshes_etag_when_put_has_no_etag(tmp_path):
     state = {"body": ICS, "etag": '"1"'}
 
@@ -264,6 +399,69 @@ def test_calendar_provider_refreshes_etag_when_put_has_no_etag(tmp_path):
     assert ledger.get("icloud", "step-no-header")["new_etag"] == '"2"'
 
 
+def test_calendar_412_closes_intent_and_allows_retry_with_same_key(tmp_path):
+    state = {"body": ICS, "etag": '"1"', "put_calls": 0}
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, text=state["body"], headers={"ETag": state["etag"]}, request=request
+            )
+        state["put_calls"] += 1
+        if state["put_calls"] == 1:
+            return httpx.Response(412, request=request)
+        state["body"] = request.content.decode()
+        state["etag"] = '"2"'
+        return httpx.Response(204, headers={"ETag": state["etag"]}, request=request)
+
+    client = ICloudCalendarClient(
+        "u", "p", base_url="https://caldav.test/home/", transport=httpx.MockTransport(handler)
+    )
+    client.calendar_href = "https://caldav.test/home/"
+    links = {
+        "ical_one": {
+            "calendar_href": client.calendar_href,
+            "href": "https://caldav.test/home/one.ics",
+            "event_uid": "event-1@example.test",
+            "etag": '"1"',
+        }
+    }
+    ledger = SqliteLedger(tmp_path / "ledger.db")
+    provider = ICloudCalendarProvider(client, SqliteStore(tmp_path / "state.db"), links, ledger)
+    action = calendar_action(key="retry-conflict")
+    first = provider.apply(action)
+    assert first.success is False and first.side_effect is False
+    refused = ledger.get("icloud", action.idempotency_key)
+    assert refused and refused["state"] == "refused" and refused["pending"] is False
+    second = provider.apply(action)
+    assert second.success is True
+    assert state["put_calls"] == 2
+
+
+def test_refused_calendar_write_is_not_an_orphan_after_restart(tmp_path):
+    state_store = SqliteStore(tmp_path / "state.db")
+    ledger = SqliteLedger(tmp_path / "ledger.db")
+    ledger.replace(
+        "icloud",
+        "refused",
+        {
+            "reference": "https://caldav.test/home/one.ics",
+            "pending": False,
+            "state": "refused",
+            "put_started": False,
+        },
+    )
+    client = ICloudCalendarClient("u", "p", base_url="https://caldav.test/home/")
+    client.calendar_href = "https://caldav.test/home/"
+    provider = ICloudCalendarProvider(client, state_store, {}, ledger)
+    service = CascadeService(
+        World(commitments=(), intents=(), dependencies=(), deadlines=()),
+        gateway=ToolGateway({"icloud": provider}),
+        store=state_store,
+    )
+    assert service.ledger_orphan_entries() == ()
+
+
 def test_calendar_sync_discards_snapshot_after_world_change():
     service = CascadeService(World(commitments=(), intents=(), dependencies=(), deadlines=()))
     commitment = Commitment(
@@ -289,6 +487,139 @@ def test_calendar_sync_discards_snapshot_after_world_change():
     result = service.sync_calendar((event,), sync_started_version=version - 1)
     assert result["stale"] is True
     assert service.world.version == version
+
+
+def test_calendar_sync_reordering_events_does_not_bump_version():
+    service = CascadeService(World(commitments=(), intents=(), dependencies=(), deadlines=()))
+    first = CalendarEvent(
+        Commitment(
+            id="ical_a",
+            kind="meeting",
+            title="A",
+            intent_id="intent_ical_a",
+            start_at=datetime(2026, 9, 15, 12, tzinfo=UTC),
+            end_at=datetime(2026, 9, 15, 13, tzinfo=UTC),
+            source=SourceRef(source="icloud_calendar", external_id="a"),
+        ),
+        {
+            "calendar_href": "https://caldav.test/home/",
+            "href": "https://caldav.test/home/a.ics",
+            "event_uid": "a",
+            "etag": '"1"',
+        },
+    )
+    second = replace(
+        first,
+        commitment=first.commitment.model_copy(
+            update={
+                "id": "ical_b",
+                "intent_id": "intent_ical_b",
+                "title": "B",
+                "source": SourceRef(source="icloud_calendar", external_id="b"),
+            }
+        ),
+        link={**first.link, "href": "https://caldav.test/home/b.ics", "event_uid": "b"},
+    )
+    assert service.sync_calendar((first, second))["changed"]
+    version = service.world.version
+    result = service.sync_calendar((second, first))
+    assert result["changed"] is False
+    assert service.world.version == version
+
+
+def test_calendar_watcher_counts_discarded_snapshots():
+    service = CascadeService(World(commitments=(), intents=(), dependencies=(), deadlines=()))
+
+    class SnapshotClient:
+        def list_events(self):
+            return CalendarSnapshot(found=True)
+
+    service.sync_calendar = lambda *args, **kwargs: {"stale": True}
+    watcher = CalendarWatcher(SnapshotClient(), service, poll_seconds=60)
+    assert watcher.sync_once()["discarded_snapshots"] == 1
+
+
+def test_calendar_undo_api_requires_verified_executed_step(monkeypatch):
+    monkeypatch.setenv("CASCADE_ICLOUD_USER", "u@example.test")
+    monkeypatch.setenv("CASCADE_ICLOUD_APP_PASSWORD", "app-password")
+    app = create_app()
+    service = app.state.service
+    action = SimpleNamespace(provider="icloud", idempotency_key="undo-api")
+    call = SimpleNamespace(action=action)
+    service.executions["exec-failed"] = SimpleNamespace(
+        steps=(SimpleNamespace(id="step", status="FAILED", call=call),)
+    )
+    service.executions["exec-unverified"] = SimpleNamespace(
+        steps=(SimpleNamespace(id="step", status="EXECUTED", call=call),)
+    )
+    with TestClient(app) as client:
+        assert client.post("/v1/calendar/undo/exec-failed/step").status_code == 409
+        provider = app.state.service.gateway.providers["icloud"]
+        provider.undo = lambda _key: (_ for _ in ()).throw(
+            CalendarError("nothing verified to undo")
+        )
+        assert client.post("/v1/calendar/undo/exec-unverified/step").status_code == 409
+
+
+def test_calendar_undo_api_returns_verified_undo(monkeypatch):
+    monkeypatch.setenv("CASCADE_ICLOUD_USER", "u@example.test")
+    monkeypatch.setenv("CASCADE_ICLOUD_APP_PASSWORD", "app-password")
+    app = create_app()
+    service = app.state.service
+    action = SimpleNamespace(provider="icloud", idempotency_key="undo-api")
+    call = SimpleNamespace(action=action)
+    service.executions["exec"] = SimpleNamespace(
+        steps=(SimpleNamespace(id="step", status="EXECUTED", call=call),)
+    )
+    provider = app.state.service.gateway.providers["icloud"]
+    outcome = {"status": "UNDONE", "href": "https://caldav.test/home/one.ics"}
+    provider.undo = lambda _key: outcome
+    service.record_calendar_undo = lambda *_args: None
+    with TestClient(app) as client:
+        response = client.post("/v1/calendar/undo/exec/step")
+    assert response.status_code == 200
+    assert response.json() == outcome
+
+
+def test_calendar_write_after_put_readback_failure_is_reconcilable(tmp_path):
+    state = {"body": ICS, "etag": '"1"', "gets": 0}
+
+    def handler(request):
+        if request.method == "GET":
+            state["gets"] += 1
+            if state["gets"] > 1:
+                return httpx.Response(503, request=request)
+            return httpx.Response(
+                200, text=state["body"], headers={"ETag": state["etag"]}, request=request
+            )
+        state["body"] = request.content.decode()
+        state["etag"] = '"2"'
+        return httpx.Response(204, request=request)
+
+    client = ICloudCalendarClient(
+        "u", "p", base_url="https://caldav.test/home/", transport=httpx.MockTransport(handler)
+    )
+    client.calendar_href = "https://caldav.test/home/"
+    links = {
+        "ical_one": {
+            "calendar_href": client.calendar_href,
+            "href": "https://caldav.test/home/one.ics",
+            "event_uid": "event-1@example.test",
+            "etag": '"1"',
+        }
+    }
+    ledger = SqliteLedger(tmp_path / "ledger.db")
+    provider = ICloudCalendarProvider(client, SqliteStore(tmp_path / "state.db"), links, ledger)
+    action = calendar_action(key="post-put-failure")
+    call = ToolGateway({"icloud": provider}).execute(
+        action,
+        ExecutionContext(
+            plan_id="plan", world_version=0, actor="owner", approved_action_ids=(action.id,)
+        ),
+    )
+    assert call.result and not call.result.success and call.result.side_effect
+    record = ledger.get("icloud", "post-put-failure")
+    assert record and record["put_started"] is True and record["pending"] is True
 
 
 def test_calendar_sync_makes_existing_approval_stale():

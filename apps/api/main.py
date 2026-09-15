@@ -104,6 +104,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         approval_ids = tuple(service.approvals)
         execution_ids = tuple(service.executions)
         calendar_ids = tuple(service.calendar_links)
+        calendar_undo_ids = tuple(service.calendar_undos)
         with service.lock, service.store.transaction():
             for event_id in event_ids:
                 service.store.delete("event", event_id)
@@ -122,6 +123,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             for commitment_id in calendar_ids:
                 service.store.delete("calendar_link", commitment_id)
                 service.store.delete("calendar_metadata", commitment_id)
+            for undo_id in calendar_undo_ids:
+                service.store.delete("calendar_undo", undo_id)
             service.world = initial_world
             service.incidents.clear()
             service.plans.clear()
@@ -132,6 +135,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             service.executions.clear()
             service.events.clear()
             service.calendar_links.clear()
+            service.calendar_undos.clear()
             service.calendar_metadata.clear()
             service.store.save_world(initial_world)
     reasoner = reasoning_provider or NebiusReasoner()
@@ -377,6 +381,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 "folder": os.environ.get("CASCADE_ICLOUD_MAIL_FOLDER", "Cascade"),
                 "last_poll_at": None,
                 "last_error_class": None,
+                "last_error_code": None,
                 "processed_count": 0,
                 "recent": [],
             }
@@ -393,6 +398,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 "skipped_all_day": 0,
                 "skipped_recurring": 0,
                 "stale_retained": 0,
+                "discarded_snapshots": 0,
                 "last_error_class": None,
             }
         return calendar_watcher.status()
@@ -441,6 +447,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         step = next((item for item in execution.steps if item.id == step_id), None)
         if step is None or step.call is None or step.call.action.provider != "icloud":
             raise HTTPException(404, "unknown calendar step")
+        if step.status != "EXECUTED":
+            raise HTTPException(409, "nothing verified to undo")
         provider = gateway.providers.get("icloud")
         if provider is None or not hasattr(provider, "undo"):
             raise HTTPException(409, "iCloud calendar is not enabled")
@@ -453,6 +461,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         except CalendarConflict as exc:
             raise HTTPException(409, str(exc)) from exc
         except CalendarError as exc:
+            if str(exc) == "nothing verified to undo":
+                raise HTTPException(409, str(exc)) from exc
             raise HTTPException(502, str(exc)) from exc
 
     @app.get("/v1/approvals")

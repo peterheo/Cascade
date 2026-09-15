@@ -124,7 +124,12 @@ class CascadeService:
             ledger = getattr(provider, "ledger", None)
             if ledger is None:
                 continue
-            all_entries.extend((provider_name, key, value) for key, value in ledger.items())
+            all_entries.extend(
+                (provider_name, key, value)
+                for key, value in ledger.items()
+                if provider_name != "icloud"
+                or (value.get("put_started") and value.get("state") != "refused")
+            )
         if not all_entries:
             return
         referenced = {
@@ -163,7 +168,7 @@ class CascadeService:
         skipped_all_day: int = 0,
         skipped_recurring: int = 0,
         sync_started_version: int | None = None,
-        persist_event_text: bool = True,
+        persist_event_text: bool = False,
     ) -> dict:
         """Merge imported calendar commitments and retain incident-linked deletions."""
         incoming = {item.commitment.id: item for item in events}

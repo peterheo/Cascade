@@ -231,6 +231,7 @@ def test_mail_watcher_is_disabled_without_credentials(monkeypatch):
             "folder": "Cascade",
             "last_poll_at": None,
             "last_error_class": None,
+            "last_error_code": None,
             "processed_count": 0,
             "recent": [],
         }
@@ -355,3 +356,30 @@ def test_transient_reasoning_failure_never_advances_cursor():
         assert result.error_class == "ReasoningError"
     assert watcher._cursor is None
     assert watcher._messages == {}
+
+
+def test_account_reasoning_failure_pauses_without_poisoning_or_advancing():
+    source = FakeSource(MailCursor(10, 1), [message(1, "<account-error@example.test>")])
+    semantic = FakeSemantic()
+    calls = 0
+
+    async def account_failure(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ReasoningError("authentication", "account rejected")
+        return await FakeSemantic.extract(semantic, request)
+
+    semantic.extract = account_failure
+    watcher = MailWatcher(source, semantic, MemoryStore(), folder="Cascade", poll_seconds=60)
+    first = asyncio.run(watcher.poll_once())
+    assert first.error_class == "ReasoningError"
+    assert watcher.status()["last_error_code"] == "authentication"
+    assert watcher._cursor is None
+    assert watcher._poison_failures == {}
+
+    watcher._next_poll = 0
+    second = asyncio.run(watcher.poll_once())
+    assert second.error_class is None
+    assert watcher.status()["last_error_code"] is None
+    assert watcher._cursor == MailCursor(10, 1)

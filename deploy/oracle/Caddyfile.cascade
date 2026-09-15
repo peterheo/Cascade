@@ -1,0 +1,8 @@
+cascade.150.136.6.100.nip.io {
+    request_body {
+        max_size 1MB
+    }
+    reverse_proxy 127.0.0.1:8500 {
+        flush_interval -1
+    }
+}

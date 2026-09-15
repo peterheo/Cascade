@@ -226,7 +226,7 @@ class ICloudCalendarClient:
             home = _property_href(ET.fromstring(second.text), "calendar-home-set")
             if not home:
                 return None
-            home_url = _href(self.base_url, home)
+            home_url = _href(principal_url, home)
             third = self._request_xml(client, "PROPFIND", home_url, list_xml, {"Depth": "1"})
             root = ET.fromstring(third.text)
             for response in (item for item in root.iter() if _local(item) == "response"):

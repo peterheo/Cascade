@@ -86,7 +86,7 @@ async function localRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function listPreferences(): Promise<Preference[]> {
   if (!isLive()) return structuredClone(DEMO_PREFERENCES);
-  return localRequest<Preference[]>('/v1/preferences');
+  return localRequest<Preference[]>('/simulation/v1/preferences');
 }
 
 export async function createPreference(
@@ -94,7 +94,7 @@ export async function createPreference(
 ): Promise<Preference> {
   if (!isLive())
     throw new Error('Preferences can only be changed in a live workspace.');
-  return localRequest<Preference>('/v1/preferences', {
+  return localRequest<Preference>('/simulation/v1/preferences', {
     method: 'POST',
     body: JSON.stringify(input),
   });
@@ -103,7 +103,7 @@ export async function createPreference(
 export async function deletePreference(id: string): Promise<void> {
   if (!isLive())
     throw new Error('Preferences can only be changed in a live workspace.');
-  await localRequest<null>(`/v1/preferences/${encodeURIComponent(id)}`, {
+  await localRequest<null>(`/simulation/v1/preferences/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
 }

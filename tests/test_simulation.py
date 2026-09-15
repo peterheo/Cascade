@@ -230,6 +230,85 @@ def test_mounted_simulation_keeps_gateway_state_and_approvals_isolated():
         assert snapshot["approvals"][0]["id"] == approval.json()["id"]
 
 
+def test_simulation_preferences_constrain_plans_and_delete_lifts_them():
+    from apps.api.main import create_app as create_product_app
+
+    with TestClient(create_product_app()) as client:
+        created = client.post(
+            "/simulation/v1/preferences",
+            json={
+                "statement": "Spend no more than 1 euro.",
+                "directive": "limit_spend",
+                "value": "1",
+            },
+        )
+        assert created.status_code == 200
+        preference_id = created.json()["id"]
+
+        injected = client.post("/simulation/v1/demo/scenarios/flight_delay/inject").json()
+        incident_id = injected["incident"]["id"]
+        constrained = client.post(
+            f"/simulation/v1/incidents/{incident_id}/plan",
+            json={"expected_version": 1},
+        ).json()
+        assert constrained["candidates"] == []
+        assert constrained["policy"]["max_additional_cost"] == "1"
+
+        assert client.delete(f"/simulation/v1/preferences/{preference_id}").status_code == 204
+        unconstrained = client.post(
+            f"/simulation/v1/incidents/{incident_id}/plan",
+            json={"expected_version": 1},
+        ).json()
+        assert unconstrained["candidates"]
+
+
+def test_gateway_and_simulation_preferences_remain_isolated():
+    from apps.api.main import create_app as create_product_app
+
+    with TestClient(create_product_app()) as client:
+        simulation = client.post(
+            "/simulation/v1/preferences",
+            json={
+                "statement": "Protect the hotel.",
+                "directive": "require_intent",
+                "value": "intent_hotel",
+            },
+        )
+        assert simulation.status_code == 200
+        assert client.get("/v1/preferences").json() == []
+
+        gateway = client.post(
+            "/v1/preferences",
+            json={
+                "statement": "Protect the dinner.",
+                "directive": "require_intent",
+                "value": "intent_restaurant",
+            },
+        )
+        assert gateway.status_code == 200
+        simulation_preferences = client.get("/simulation/v1/preferences").json()
+        assert len(simulation_preferences) == 1
+        assert simulation_preferences[0]["statement"] == "Protect the hotel."
+
+
+def test_simulation_demo_reset_keeps_preferences():
+    from apps.api.main import create_app as create_product_app
+
+    with TestClient(create_product_app()) as client:
+        created = client.post(
+            "/simulation/v1/preferences",
+            json={
+                "statement": "Protect the hotel.",
+                "directive": "require_intent",
+                "value": "intent_hotel",
+            },
+        )
+        assert created.status_code == 200
+        assert client.post("/simulation/v1/demo/reset").status_code == 200
+        preferences = client.get("/simulation/v1/preferences").json()
+        assert [item["id"] for item in preferences] == [created.json()["id"]]
+
+
 def test_simulation_stream_announces_mutations():
     app = create_app()
     queue = app.state.simulation_stream.subscribe()

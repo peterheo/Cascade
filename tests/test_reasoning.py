@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 
 import httpx
@@ -7,9 +8,16 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 
 from apps.api.main import create_app
+from apps.api.simulation import create_app as create_simulation_app
 from cascade.demo import at, delay_event, demo_world
+from cascade.persistence import SqliteStore
 from cascade.planning.models import SearchPolicy
-from cascade.reasoning.models import ExtractedChange, NaturalEventRequest, PlanComparison
+from cascade.reasoning.models import (
+    ExtractedChange,
+    NaturalEventRequest,
+    PlanComparison,
+    PrivacySettings,
+)
 from cascade.reasoning.nebius import NebiusReasoner, NebiusSettings, ReasoningError
 from cascade.reasoning.service import SemanticService
 from cascade.service import CascadeService, ConflictError
@@ -522,3 +530,115 @@ def test_state_change_during_comparison_rejects_stale_advice():
             )
         )
     assert core.world.version == 2
+
+
+def _json_context(request):
+    return json.loads(request.content)["messages"][1]["content"]
+
+
+def _contains_key(value, key):
+    if isinstance(value, dict):
+        return key in value or any(_contains_key(item, key) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(item, key) for item in value)
+    return False
+
+
+def test_reasoning_contexts_are_minimized_and_manifests_match_wire_payload():
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return semantic_handler(request)
+
+    core = CascadeService(demo_world())
+    semantic = SemanticService(core, reasoner(handler))
+    extraction = asyncio.run(semantic.extract(extraction_request()))
+    extract_context_payload = json.loads(_json_context(captured[0]))
+    assert all(
+        set(commitment) == {"id", "kind", "title", "start_at", "end_at"}
+        for commitment in extract_context_payload["world"]["commitments"]
+    )
+    assert not _contains_key(extract_context_payload, "source")
+    assert not _contains_key(extract_context_payload, "intent_id")
+    extract_manifest = extraction.model_call.manifest
+    assert extract_manifest.input_hash == extraction.model_call.input_hash
+    assert extract_manifest.bytes_sent == len(_json_context(captured[0]).encode())
+
+    incident = core.ingest(delay_event()).incident
+    assisted = asyncio.run(semantic.assisted_plan(incident.id, 1, SearchPolicy()))
+    assert assisted.strategy is not None and assisted.comparison is not None
+    strategy_payload = json.loads(_json_context(captured[1]))
+    assert {item["id"] for item in strategy_payload["commitments"]} == set(
+        incident.affected_commitment_ids
+    )
+    assert strategy_payload["allowed_resolutions"] == [
+        "PRESERVED",
+        "RESCHEDULED",
+        "SUBSTITUTED",
+        "COMPENSATED",
+        "ABANDONED",
+    ]
+    assert not _contains_key(strategy_payload, "source")
+    assert not _contains_key(strategy_payload, "intent_id")
+    compare_payload = json.loads(_json_context(captured[2]))
+    assert not _contains_key(compare_payload, "world")
+    assert all(
+        set(action) == {"commitment_id", "resolution", "option_id"}
+        for candidate in compare_payload["candidates"]
+        for action in candidate["actions"]
+    )
+    for request in captured:
+        assert request.content
+    assert all(call.manifest.input_hash == call.input_hash for call in assisted.model_calls)
+    assert all(
+        call.manifest.bytes_sent == len(_json_context(request).encode())
+        for call, request in zip(assisted.model_calls, captured[1:], strict=True)
+    )
+
+
+def test_live_inference_can_be_disabled_without_transport_calls():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return semantic_handler(request)
+
+    core = CascadeService(demo_world())
+    incident = core.ingest(delay_event()).incident
+    semantic = SemanticService(core, reasoner(handler), PrivacySettings(live_inference=False))
+    result = asyncio.run(semantic.assisted_plan(incident.id, 1, SearchPolicy()))
+    assert not calls
+    assert len(result.planning.candidates) == 5
+    assert result.model_calls == ()
+    assert all("disabled" in warning for warning in result.warnings)
+
+
+def test_event_text_is_hashed_in_persisted_audit_by_default(tmp_path):
+    core = CascadeService(demo_world(), store=SqliteStore(tmp_path / "gateway.db"))
+    semantic = SemanticService(
+        core,
+        reasoner(lambda request: httpx.Response(200, json=completion(change()))),
+    )
+    asyncio.run(semantic.extract(extraction_request()))
+    persisted = SqliteStore(tmp_path / "gateway.db").load()
+    assert persisted is not None
+    extracted_audits = [entry for entry in persisted.audit if entry["type"] == "event.extracted"]
+    assert len(extracted_audits) == 1
+    entry = extracted_audits[0]
+    assert entry["text_sha256"] == hashlib.sha256(TEXT.encode()).hexdigest()
+    assert "text" not in entry
+    assert TEXT not in json.dumps(persisted.audit)
+
+
+def test_privacy_endpoints_exist_in_gateway_and_simulation():
+    for factory in (create_app, create_simulation_app):
+        with TestClient(factory(NebiusReasoner(NebiusSettings()))) as client:
+            assert client.get("/v1/privacy").json() == {
+                "live_inference": True,
+                "persist_event_text": False,
+            }
+            updated = client.patch("/v1/privacy", json={"live_inference": False})
+            assert updated.status_code == 200
+            assert updated.json()["live_inference"] is False
+            assert client.get("/v1/reasoning/status").json()["live_inference"] is False

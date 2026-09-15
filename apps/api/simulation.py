@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import Field, ValidationError
 
 from apps.api.preferences import register_preference_routes
+from apps.api.privacy import register_privacy_routes
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
@@ -65,6 +66,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     simulation_stream = EventStream()
     app.state.service = service
     app.state.simulation_stream = simulation_stream
+    register_privacy_routes(app, semantic)
     demo_event_id = None
 
     def apply_event(event: Mutation, reason: str, scenario_id: str | None = None):
@@ -89,6 +91,12 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.get("/v1/workspace")
     def workspace():
         with service.lock:
+            reasoning = reasoner.status() if isinstance(reasoner, NebiusReasoner) else None
+            if reasoning is not None:
+                reasoning = {
+                    **reasoning,
+                    "live_inference": semantic.privacy.live_inference,
+                }
             return {
                 "state": {"world": service.world, "assessment": evaluate(service.world)},
                 "incidents": service.incidents,
@@ -97,7 +105,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 "approvals": tuple(executor.approvals.values()),
                 "executions": tuple(executor.executions.values()),
                 "audit": service.audit,
-                "reasoning": reasoner.status() if isinstance(reasoner, NebiusReasoner) else None,
+                "reasoning": reasoning,
             }
 
     @app.get("/v1/stream")
@@ -255,8 +263,14 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.get("/v1/reasoning/status")
     def reasoning_status():
         if isinstance(reasoner, NebiusReasoner):
-            return reasoner.status()
-        return {"provider": "injected_test_provider", "configured": True, "live_verified": False}
+            status = reasoner.status()
+        else:
+            status = {
+                "provider": "injected_test_provider",
+                "configured": True,
+                "live_verified": False,
+            }
+        return {**status, "live_inference": semantic.privacy.live_inference}
 
     @app.post("/v1/events/text")
     async def natural_event(request: NaturalEventRequest):

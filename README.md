@@ -112,6 +112,12 @@ ledger remain resettable and in memory. The Oracle unit stores these databases a
 incident automatically; `{"skill": "..."}` on the plan request chooses one explicitly, and
 an explicit `policy` overrides the template's limits.
 
+`GET /v1/privacy` reports the process-local reasoning controls. `PATCH /v1/privacy` can
+pause live Nemotron calls while keeping deterministic planning available. Event extraction
+audits keep a SHA-256 digest of the submitted text by default; set `persist_event_text` only
+when retaining the raw text is appropriate. Reasoning audits include a context manifest with
+the task, allowlisted fields, entity IDs, byte count, and input hash, never the rendered prompt.
+
 `POST /v1/incidents/{id}/replan` reruns against the requested current version.
 `GET /v1/recovery-plans/{id}` returns a saved candidate and marks it stale after a
 world change. Planning appends audit evidence while leaving commitments untouched.
@@ -237,6 +243,8 @@ booking, refund or message is ever sent. The gateway sandbox is enforced in-proc
 so it constrains Cascade's executor rather than the operating system. In the React
 workspace, security denials are read from the gateway's sandbox, and simulation
 executions don't pass through that sandbox, so the security callout stays empty there.
+`PATCH /v1/privacy` is process-wide and unauthenticated until sign-in lands, so any visitor
+can pause live inference for everyone.
 Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness
 refers only to the queried inventory and operators.

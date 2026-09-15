@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import STATIC, create_app
+from apps.api.simulation import create_app as create_simulation_app
 
 SCRIPT = (STATIC / "app.js").read_text()
 
@@ -57,7 +58,8 @@ def test_the_ui_never_calls_a_mutating_endpoint_by_accident(client):
     """Writes happen only on the paths the approval flow is built around."""
     mutating = set(re.findall(r"method:\s*\"POST\"", SCRIPT))
     assert mutating, "the UI must reach mutations through explicit POSTs"
-    assert "DELETE" not in SCRIPT and "PATCH" not in SCRIPT
+    assert "DELETE" not in SCRIPT
+    assert 'method: "PATCH"' in SCRIPT and "/v1/privacy" in SCRIPT
     # The approval total is echoed back from the server, never recomputed client side.
     assert "acknowledged_amount: state.approval.total_amount" in SCRIPT
 
@@ -73,6 +75,12 @@ def test_the_natural_language_path_never_applies_without_confirmation():
 def test_a_missing_model_does_not_block_the_deterministic_path():
     assert "The deterministic simulator still works." in SCRIPT
     assert "/v1/reasoning/status" in SCRIPT
+
+
+def test_privacy_endpoint_exists_in_both_apps():
+    for factory in (create_app, create_simulation_app):
+        with TestClient(factory()) as app:
+            assert app.get("/v1/privacy").status_code == 200
 
 
 def test_the_ui_can_choose_a_recovery_template():

@@ -8,6 +8,18 @@ from cascade.planning.models import PlanningResult, Resolution
 ReasoningTask = Literal["extract", "strategy", "compare"]
 
 
+class ContextManifest(Record):
+    """Auditable metadata describing the exact minimized context sent to a model."""
+
+    task: ReasoningTask
+    model: str
+    fields: tuple[str, ...]
+    entity_ids: tuple[str, ...]
+    bytes_sent: int = Field(ge=0)
+    input_hash: str
+    minimized: bool
+
+
 class ExtractedChange(Record):
     outcome: Literal["UPDATE", "NO_CHANGE", "NEEDS_CLARIFICATION", "UNSUPPORTED"]
     commitment_id: str | None
@@ -73,6 +85,14 @@ class ModelCall(Record):
     # Token counts are optional because not every compatible response supplies them.
     input_tokens: int | None
     output_tokens: int | None
+    manifest: ContextManifest
+
+
+class PrivacySettings(Record):
+    """Process-local controls for live inference and event-text retention."""
+
+    live_inference: bool = True
+    persist_event_text: bool = False
 
 
 class NaturalEventRequest(Record):

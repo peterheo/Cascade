@@ -471,6 +471,19 @@ main {
   font-size: 12px;
 }
 
+.privacy-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.privacy-toggle input {
+  accent-color: var(--accent);
+}
+
 .audit {
   list-style: none;
   margin: 14px 0 0;
@@ -491,6 +504,47 @@ main {
 .audit li b {
   color: var(--ink);
   font-weight: 600;
+}
+
+.reasoning-manifest {
+  margin-top: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.reasoning-manifest summary {
+  margin: 0;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.manifest-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  margin-top: 8px;
+}
+
+.manifest-grid span,
+.reasoning-manifest p,
+.reasoning-manifest code {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.manifest-grid strong {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.reasoning-manifest p,
+.reasoning-manifest code {
+  display: block;
+  margin: 7px 0 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .sandbox {

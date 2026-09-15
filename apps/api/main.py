@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
 
 from apps.api.preferences import register_preference_routes
+from apps.api.privacy import register_privacy_routes
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
@@ -74,6 +75,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     # Exposed for tests and for anything that has the app but not the closure.
     app.state.service = service
     register_preference_routes(app, service)
+    register_privacy_routes(app, semantic)
 
     @app.exception_handler(ReasoningError)
     async def reasoning_error(request, exc):
@@ -87,8 +89,14 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.get("/v1/reasoning/status")
     def reasoning_status():
         if isinstance(reasoner, NebiusReasoner):
-            return reasoner.status()
-        return {"provider": "injected_test_provider", "configured": True, "live_verified": False}
+            status = reasoner.status()
+        else:
+            status = {
+                "provider": "injected_test_provider",
+                "configured": True,
+                "live_verified": False,
+            }
+        return {**status, "live_inference": semantic.privacy.live_inference}
 
     @app.post("/v1/events/text")
     async def natural_event(request: NaturalEventRequest):

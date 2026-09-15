@@ -36,10 +36,12 @@ class SemanticService:
             parsed, trace = await self.provider.structured(task, schema, prompt, context)
         except ReasoningError as exc:
             with self.core.lock:
-                self.core.audit.append({"type": "reasoning.failed", "task": task, "code": exc.code})
+                self.core._record_audit(
+                    {"type": "reasoning.failed", "task": task, "code": exc.code}
+                )
             raise
         with self.core.lock:
-            self.core.audit.append(
+            self.core._record_audit(
                 {
                     "type": "reasoning.completed",
                     "call": trace.model_dump(mode="json"),
@@ -50,7 +52,7 @@ class SemanticService:
 
     def _reject(self, message: str):
         with self.core.lock:
-            self.core.audit.append({"type": "reasoning.rejected", "reason": message})
+            self.core._record_audit({"type": "reasoning.rejected", "reason": message})
         raise ReasoningError("invalid_output", message)
 
     async def extract(self, request: NaturalEventRequest) -> ExtractionResult:
@@ -135,7 +137,7 @@ class SemanticService:
                 self.requests[request.event_id] = request
                 self.extractions[result.id] = result
                 self.event_to_extraction[request.event_id] = result.id
-                self.core.audit.append(
+                self.core._record_audit(
                     {
                         "type": "event.extracted",
                         "event_id": request.event_id,
@@ -172,7 +174,7 @@ class SemanticService:
                     update={"status": "APPLIED", "event_result": event_result}
                 )
                 self.extractions[extraction_id] = updated
-                self.core.audit.append(
+                self.core._record_audit(
                     {"type": "extraction.confirmed", "extraction_id": extraction_id}
                 )
                 return updated
@@ -276,7 +278,7 @@ class SemanticService:
                     warnings=tuple(warnings),
                 )
                 self.latest_assisted = result
-                self.core.audit.append(
+                self.core._record_audit(
                     {"type": "recovery.reasoned", "result": result.model_dump(mode="json")}
                 )
             return result

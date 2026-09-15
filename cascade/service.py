@@ -22,6 +22,7 @@ from cascade.memory.resolutions import (
     suggest,
 )
 from cascade.observability.events import EventStream
+from cascade.persistence import MemoryStore, StateStore
 from cascade.planning.demo import demo_planner
 from cascade.planning.models import CandidatePlan, PlanningResult, SearchPolicy
 from cascade.planning.planner import RecoveryPlanner
@@ -46,12 +47,16 @@ class CascadeService:
         gateway: ToolGateway | None = None,
         permissions: PermissionPolicy | None = None,
         planner: RecoveryPlanner | None = None,
+        store: StateStore | None = None,
     ):
-        evaluate(world)
-        self.world = world
-        self.events: dict[str, tuple[Mutation, EventResult]] = {}
-        self.incidents: list[Incident] = []
-        self.audit: list[dict] = []
+        self.store = store or MemoryStore()
+        persisted = self.store.load()
+        initial_world = persisted.world if persisted and persisted.world is not None else world
+        evaluate(initial_world)
+        self.world = initial_world
+        self.events: dict[str, tuple[Mutation, EventResult]] = persisted.events if persisted else {}
+        self.incidents: list[Incident] = persisted.incidents if persisted else []
+        self.audit: list[dict] = persisted.audit if persisted else []
         self.lock = RLock()
         self.plans: dict[str, CandidatePlan] = {}
         self.plan_incidents: dict[str, tuple[str, ...]] = {}
@@ -60,13 +65,34 @@ class CascadeService:
         self.executor = PlanExecutor(self.gateway)
         self.permissions = permissions or PermissionPolicy()
         self.skills = load_skills()
-        self.preferences: dict[str, Preference] = {}
-        self.resolutions: list[ResolutionRecord] = []
+        self.preferences: dict[str, Preference] = persisted.preferences if persisted else {}
+        self.resolutions: list[ResolutionRecord] = persisted.resolutions if persisted else []
         self.searches: dict[str, PlanningResult] = {}
         self.latest_planning: PlanningResult | None = None
         self.stream = EventStream()
         self.approvals: dict[str, ApprovalRequest] = {}
         self.executions: dict[str, ExecutionResult] = {}
+        if persisted is None or persisted.world is None:
+            self.store.save_world(self.world)
+
+    def _record_audit(self, body: dict) -> None:
+        with self.store.transaction():
+            self.audit.append(body)
+            self.store.append("audit", body)
+
+    def _record_resolution(self, record: ResolutionRecord) -> None:
+        with self.store.transaction():
+            self.resolutions.append(record)
+            self.store.append("resolution", record.model_dump(mode="json"))
+
+    def _save_world(self) -> None:
+        self.store.save_world(self.world)
+
+    def _save_incident(self, incident: Incident) -> None:
+        self.store.put("incident", incident.id, incident)
+
+    def _save_preference(self, preference: Preference) -> None:
+        self.store.put("preference", preference.id, preference)
 
     def incident(self, incident_id: str) -> Incident:
         with self.lock:
@@ -85,23 +111,23 @@ class CascadeService:
             if incident.status != "OPEN":
                 continue
             if not any(v.constraint_id in active for v in incident.violations):
-                self._replace_incident(
-                    incident.model_copy(
-                        update={
-                            "status": "RESOLVED",
-                            "resolved_at": datetime.now(UTC),
-                            "resolution_note": "No violation from this incident remains in state.",
-                        }
-                    )
+                resolved = incident.model_copy(
+                    update={
+                        "status": "RESOLVED",
+                        "resolved_at": datetime.now(UTC),
+                        "resolution_note": "No violation from this incident remains in state.",
+                    }
                 )
-                self.audit.append({"type": "incident.resolved", "incident_id": incident.id})
+                self._replace_incident(resolved)
+                self._save_incident(resolved)
+                self._record_audit({"type": "incident.resolved", "incident_id": incident.id})
                 self.stream.publish(
                     "incident.resolved", self.world.version, incident_id=incident.id
                 )
 
     def dismiss(self, incident_id: str, actor: str, note: str) -> Incident:
         """The user can decline recovery; that is an explicit outcome, not a failure."""
-        with self.lock:
+        with self.lock, self.store.transaction():
             incident = self.incident(incident_id)
             if incident.status != "OPEN":
                 raise ConflictError("this incident is already closed")
@@ -113,8 +139,9 @@ class CascadeService:
                 }
             )
             self._replace_incident(dismissed)
-            self.resolutions.append(record_dismissal(incident_id, incident.severity))
-            self.audit.append(
+            self._save_incident(dismissed)
+            self._record_resolution(record_dismissal(incident_id, incident.severity))
+            self._record_audit(
                 {
                     "type": "incident.dismissed",
                     "incident_id": incident_id,
@@ -128,26 +155,28 @@ class CascadeService:
             return dismissed
 
     def add_preference(self, item: Preference) -> Preference:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if item.source == "learned" and item.status == "ACTIVE":
                 raise PreferenceError("a learned preference must be promoted, not created active")
             narrow(SearchPolicy(), (*self.preferences.values(), item), self.world)
             self.preferences[item.id] = item
-            self.audit.append(
+            self._save_preference(item)
+            self._record_audit(
                 {"type": "preference.added", "preference": item.model_dump(mode="json")}
             )
             self.stream.publish("preference.changed", self.world.version, preference_id=item.id)
             return item
 
     def set_preference_status(self, preference_id: str, status: str, actor: str) -> Preference:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if preference_id not in self.preferences:
                 raise KeyError(preference_id)
             updated = promote(self.preferences[preference_id], status, actor)
             others = tuple(p for p in self.preferences.values() if p.id != preference_id)
             narrow(SearchPolicy(), (*others, updated), self.world)
             self.preferences[preference_id] = updated
-            self.audit.append(
+            self._save_preference(updated)
+            self._record_audit(
                 {
                     "type": "preference.updated",
                     "preference_id": preference_id,
@@ -161,11 +190,12 @@ class CascadeService:
             return updated
 
     def delete_preference(self, preference_id: str) -> None:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if preference_id not in self.preferences:
                 raise KeyError(preference_id)
             del self.preferences[preference_id]
-            self.audit.append({"type": "preference.deleted", "preference_id": preference_id})
+            self.store.delete("preference", preference_id)
+            self._record_audit({"type": "preference.deleted", "preference_id": preference_id})
             self.stream.publish(
                 "preference.changed", self.world.version, preference_id=preference_id
             )
@@ -182,7 +212,7 @@ class CascadeService:
         approved_action_ids: tuple[str, ...],
         acknowledged_amount: Decimal,
     ) -> ApprovalRequest:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if request_id not in self.approvals:
                 raise KeyError(request_id)
             request = self.approvals[request_id]
@@ -190,7 +220,7 @@ class CascadeService:
                 raise ConflictError("the world changed; request approval against current state")
             decided = grant(request, actor, approved_action_ids, acknowledged_amount)
             self.approvals[request_id] = decided
-            self.audit.append(
+            self._record_audit(
                 {"type": "approval.granted", "approval": decided.model_dump(mode="json")}
             )
             self.stream.publish(
@@ -199,12 +229,12 @@ class CascadeService:
             return decided
 
     def reject(self, request_id: str, actor: str, note: str) -> ApprovalRequest:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if request_id not in self.approvals:
                 raise KeyError(request_id)
             decided = reject(self.approvals[request_id], actor, note)
             self.approvals[request_id] = decided
-            self.audit.append(
+            self._record_audit(
                 {"type": "approval.rejected", "approval": decided.model_dump(mode="json")}
             )
             self.stream.publish(
@@ -214,7 +244,7 @@ class CascadeService:
 
     def execute(self, plan_id: str, expected_version: int, actor: str) -> ExecutionResult:
         """Run one approved plan. Side effects commit step by step, never in bulk."""
-        with self.lock:
+        with self.lock, self.store.transaction():
             if plan_id not in self.plans:
                 raise KeyError(plan_id)
             if expected_version != self.world.version:
@@ -241,26 +271,25 @@ class CascadeService:
                 self.approvals[result.approval_request.id] = result.approval_request
             if result.world.version != self.world.version:
                 self.world = result.world
+                self._save_world()
                 self._reconcile(evaluate(self.world))
             if result.status == "COMPLETED" and incident_id:
                 incident = self.incident(incident_id)
                 if incident.status == "OPEN":
-                    self._replace_incident(
-                        incident.model_copy(
-                            update={
-                                "status": "RESOLVED",
-                                "resolved_at": datetime.now(UTC),
-                                "resolution_note": (
-                                    f"Recovery plan {plan.id} executed and verified."
-                                ),
-                            }
-                        )
+                    resolved = incident.model_copy(
+                        update={
+                            "status": "RESOLVED",
+                            "resolved_at": datetime.now(UTC),
+                            "resolution_note": f"Recovery plan {plan.id} executed and verified.",
+                        }
                     )
+                    self._replace_incident(resolved)
+                    self._save_incident(resolved)
             self.executions[result.id] = result
             if result.status == "COMPLETED" and plan.id in self.searches:
                 severity = self.incident(incident_id).severity if incident_id else None
-                self.resolutions.append(record_execution(self.searches[plan.id], result, severity))
-            self.audit.append(
+                self._record_resolution(record_execution(self.searches[plan.id], result, severity))
+            self._record_audit(
                 {"type": "recovery.executed", "result": result.model_dump(mode="json")}
             )
             if result.approval_request is not None:
@@ -298,7 +327,7 @@ class CascadeService:
         operator_priorities: dict[str, tuple[str, ...]] | None = None,
         skill_name: str | None = None,
     ) -> PlanningResult:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if expected_version != self.world.version:
                 raise ConflictError("stale world version; fetch state before planning")
             incident = next((i for i in self.incidents if i.id == incident_id), None)
@@ -325,8 +354,10 @@ class CascadeService:
             self.latest_planning = result
             self.plan_incidents[incident.id] = tuple(p.id for p in result.candidates)
             if incident.status == "OPEN":
-                self._replace_incident(incident.model_copy(update={"severity": classify(result)}))
-            self.audit.append(
+                updated_incident = incident.model_copy(update={"severity": classify(result)})
+                self._replace_incident(updated_incident)
+                self._save_incident(updated_incident)
+            self._record_audit(
                 {"type": "recovery.planned", "result": result.model_dump(mode="json")}
             )
             self.stream.publish(
@@ -340,7 +371,7 @@ class CascadeService:
             return result
 
     def ingest(self, event: Mutation) -> EventResult:
-        with self.lock:
+        with self.lock, self.store.transaction():
             if event.event_id in self.events:
                 original, result = self.events[event.event_id]
                 if original != event:
@@ -406,9 +437,12 @@ class CascadeService:
             )
             self.world = world
             self.events[event.event_id] = (event, result)
+            self._save_world()
+            self.store.put("event", event.event_id, (event, result))
             if incident:
                 self.incidents.append(incident)
-            self.audit.append(
+                self._save_incident(incident)
+            self._record_audit(
                 {
                     "event_id": event.event_id,
                     "type": "state.assessed",

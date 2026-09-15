@@ -75,6 +75,35 @@ def record_execution(
     )
 
 
+def record_simulation_execution(
+    planning: PlanningResult, execution, severity: str | None, incident_id: str = ""
+) -> ResolutionRecord:
+    """Record a completed React simulation using its stepwise execution model."""
+    chosen = next((p for p in planning.candidates if p.id == execution.plan_id), None)
+    return ResolutionRecord(
+        id=f"res_{uuid4().hex}",
+        incident_id=incident_id,
+        outcome="EXECUTED",
+        trigger_commitment_id="",
+        affected_commitment_ids=(
+            tuple(action.commitment_id for action in chosen.actions) if chosen else ()
+        ),
+        severity=severity,
+        skill=planning.skill.name if planning.skill else None,
+        selected_plan_id=execution.plan_id,
+        rejected_plan_ids=tuple(p.id for p in planning.candidates if p.id != execution.plan_id),
+        chosen_intents=profile(chosen.intent_quality) if chosen else (),
+        rejected_intents=tuple(
+            profile(p.intent_quality) for p in planning.candidates if p.id != execution.plan_id
+        ),
+        executed_actions=tuple(
+            outcome.action_id for outcome in execution.outcomes if outcome.status == "VERIFIED"
+        ),
+        additional_cost=str(chosen.additional_cost) if chosen else "0",
+        recorded_at=datetime.now(UTC),
+    )
+
+
 def record_dismissal(incident_id: str, severity: str | None) -> ResolutionRecord:
     return ResolutionRecord(
         id=f"res_{uuid4().hex}",

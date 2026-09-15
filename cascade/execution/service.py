@@ -6,6 +6,7 @@ from uuid import uuid4
 from cascade.constraints.engine import evaluate
 from cascade.execution.executor import action_for
 from cascade.execution.simulation_models import ActionOutcome, Approval, Execution
+from cascade.memory.resolutions import record_simulation_execution
 from cascade.planning.operators import apply_option
 from cascade.service import CascadeService, ConflictError
 from cascade.tools.adapters.booking import FixtureBookingProvider
@@ -53,7 +54,7 @@ class ExecutionService:
         return plan
 
     def decide(self, incident_id, plan_id, expected_version, approve):
-        with self.core.lock:
+        with self.core.lock, self.core.store.transaction():
             plan = self._plan(plan_id, expected_version)
             if plan_id not in self.core.plan_incidents.get(incident_id, ()):
                 raise ConflictError("plan belongs to a different incident")
@@ -74,7 +75,7 @@ class ExecutionService:
                 created_at=datetime.now(UTC),
             )
             self.approvals[plan_id] = result
-            self.core.audit.append(
+            self.core._record_audit(
                 {
                     "type": "plan.approved" if approve else "plan.rejected",
                     "approval": result.model_dump(mode="json"),
@@ -120,7 +121,7 @@ class ExecutionService:
             )
 
     def start(self, plan_id, approval_id, expected_version):
-        with self.core.lock:
+        with self.core.lock, self.core.store.transaction():
             for execution in self.executions.values():
                 if execution.plan_id == plan_id and execution.approval_id == approval_id:
                     return execution
@@ -152,13 +153,13 @@ class ExecutionService:
             self.bases[execution.id] = self.core.world
             self.executions[execution.id] = execution
             self.approvals[plan_id] = approval.model_copy(update={"status": "CONSUMED"})
-            self.core.audit.append(
+            self.core._record_audit(
                 {"type": "execution.started", "execution": execution.model_dump(mode="json")}
             )
             return execution
 
     def advance(self, execution_id, expected_step):
-        with self.core.lock:
+        with self.core.lock, self.core.store.transaction():
             if execution_id not in self.executions:
                 raise KeyError(execution_id)
             execution = self.executions[execution_id]
@@ -192,7 +193,7 @@ class ExecutionService:
                     }
                 )
                 self.executions[execution_id] = updated
-                self.core.audit.append(
+                self.core._record_audit(
                     {"type": "execution.blocked", "execution": updated.model_dump(mode="json")}
                 )
                 return updated
@@ -215,7 +216,7 @@ class ExecutionService:
                     }
                 )
             else:
-                self.core.audit.append(
+                self.core._record_audit(
                     {"type": "action.started", "action_id": action.id, "execution_id": execution.id}
                 )
                 next_world = apply_option(self.core.world, action)
@@ -277,6 +278,7 @@ class ExecutionService:
                             update={"version": self.core.world.version + 1}
                         )
                         self.core.world = next_world
+                        self.core._save_world()
                 assessment = evaluate(self.core.world)
                 last = expected_step + 1 == len(plan.actions)
                 verified = verified and (
@@ -312,7 +314,7 @@ class ExecutionService:
                 if last and verified:
                     self.core._reconcile(assessment)
             self.executions[execution_id] = updated
-            self.core.audit.append(
+            self.core._record_audit(
                 {
                     "type": "action.verified" if outcome.status == "VERIFIED" else "action.failed",
                     "execution_id": execution.id,
@@ -320,13 +322,18 @@ class ExecutionService:
                 }
             )
             if updated.status == "SUCCEEDED":
-                self.core.audit.append(
+                self.core._record_audit(
                     {"type": "incident.resolved", "incident_id": approval.incident_id}
                 )
+                planning = self.core.searches.get(plan.id)
+                if planning is not None:
+                    self.core._record_resolution(
+                        record_simulation_execution(planning, updated, None, approval.incident_id)
+                    )
             return updated
 
     def cancel(self, execution_id):
-        with self.core.lock:
+        with self.core.lock, self.core.store.transaction():
             if execution_id not in self.executions:
                 raise KeyError(execution_id)
             execution = self.executions[execution_id]
@@ -338,7 +345,7 @@ class ExecutionService:
                     }
                 )
                 self.executions[execution_id] = execution
-                self.core.audit.append(
+                self.core._record_audit(
                     {"type": "execution.cancelled", "execution_id": execution_id}
                 )
             return execution

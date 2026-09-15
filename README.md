@@ -288,3 +288,7 @@ uses synthetic data and has no live backend.
 Run `uv run python scripts/export_web_demo.py` to regenerate it after fixture changes.
 Validate the React workspace with `npm run typecheck`, `npm run lint`, `npm test`,
 and `npm run build` from `apps/web`.
+
+## License
+
+Licensed under the Apache License, Version 2.0 — see `LICENSE`.

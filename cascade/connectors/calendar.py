@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -73,8 +73,8 @@ def _href(base: str, value: str) -> str:
 
 
 def _safe_href(collection: str, href: str) -> bool:
-    root = urlsplit(collection)
-    target = urlsplit(href)
+    root = urlsplit(_normalize_url(collection))
+    target = urlsplit(_normalize_url(href))
     if target.scheme != root.scheme or target.netloc != root.netloc:
         return False
     root_path = posixpath.normpath(unquote(root.path)).rstrip("/") + "/"
@@ -82,16 +82,37 @@ def _safe_href(collection: str, href: str) -> bool:
     return target_path.startswith(root_path)
 
 
+def _normalize_url(url: str) -> str:
+    parsed = urlsplit(url)
+    try:
+        port = parsed.port
+    except ValueError:
+        return url
+    if port == 443:
+        return urlunsplit(
+            (parsed.scheme, parsed.hostname or "", parsed.path, parsed.query, parsed.fragment)
+        )
+    return url
+
+
 def _validate_discovered_url(url: str) -> str:
     parsed = urlsplit(url)
     host = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise CalendarError("CalDAV discovery returned an unsafe URL") from exc
     if (
         parsed.scheme != "https"
-        or parsed.port is not None
+        or port not in (None, 443)
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
         or not (host == "caldav.icloud.com" or host.endswith(".icloud.com"))
     ):
         raise CalendarError("CalDAV discovery returned an unsafe URL")
-    return url
+    return _normalize_url(url)
 
 
 def _event_interval(event: Event) -> tuple[datetime | date, datetime | date] | None:
@@ -109,6 +130,12 @@ def _event_interval(event: Event) -> tuple[datetime | date, datetime | date] | N
     else:
         end = start + timedelta(hours=1)
     return start, end
+
+
+def _localize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    return value
 
 
 def _kind(event: Event) -> str:
@@ -137,8 +164,8 @@ def _calendar_event(calendar_data: str, href: str, calendar_href: str, etag: str
         return "recurring"
     if not isinstance(end, datetime):
         return None
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=datetime.now().astimezone().tzinfo)
+    start = _localize_datetime(start)
+    end = _localize_datetime(end)
     if end.tzinfo is None:
         end = end.replace(tzinfo=start.tzinfo)
     commitment_id = "ical_" + hashlib.sha256(uid.encode()).hexdigest()[:16]
@@ -249,22 +276,19 @@ class ICloudCalendarClient:
             principal = _property_href(ET.fromstring(first.text), "current-user-principal")
             if not principal:
                 return None
-            principal_url = _href(self.base_url, principal)
-            _validate_discovered_url(principal_url)
+            principal_url = _validate_discovered_url(_href(self.base_url, principal))
             second = self._request_xml(client, "PROPFIND", principal_url, home_xml, {"Depth": "0"})
             home = _property_href(ET.fromstring(second.text), "calendar-home-set")
             if not home:
                 return None
-            home_url = _href(principal_url, home)
-            _validate_discovered_url(home_url)
+            home_url = _validate_discovered_url(_href(principal_url, home))
             third = self._request_xml(client, "PROPFIND", home_url, list_xml, {"Depth": "1"})
             root = ET.fromstring(third.text)
             for response in (item for item in root.iter() if _local(item) == "response"):
                 display = _text(response, "displayname")
                 href = _text(response, "href")
                 if display == self.calendar_name and href:
-                    self.calendar_href = _href(home_url, href)
-                    _validate_discovered_url(self.calendar_href)
+                    self.calendar_href = _validate_discovered_url(_href(home_url, href))
                     return self.calendar_href
         return None
 
@@ -381,6 +405,13 @@ class ICloudCalendarProvider:
             observed_end_at=end,
         )
 
+    def _replace_ledger(self, key: str, value: dict) -> None:
+        replace = getattr(self.ledger, "replace", None)
+        if replace is None:
+            self.ledger[key] = value
+        else:
+            replace(key, value)
+
     def _read(self, action: ToolAction):
         link = self._link(action)
         body, etag = self.client.get(link["href"])
@@ -411,13 +442,15 @@ class ICloudCalendarProvider:
             return self._result(
                 action, success=False, detail="event interval unavailable", href=href
             )
+        start, end = interval
+        start, end = _localize_datetime(start), _localize_datetime(end)
         return self._result(
             action,
             success=True,
             detail="calendar event read",
             href=href,
-            start=interval[0],
-            end=interval[1],
+            start=start,
+            end=end,
         )
 
     def check(self, action: ToolAction) -> ToolResult:
@@ -435,7 +468,7 @@ class ICloudCalendarProvider:
 
     def apply(self, action: ToolAction) -> ToolResult:
         recorded = self.ledger.get(action.idempotency_key)
-        if recorded is not None:
+        if recorded is not None and recorded.get("put_started"):
             return self._result(
                 action,
                 success=True,
@@ -485,6 +518,7 @@ class ICloudCalendarProvider:
                 "end_at": new_end,
                 "refund": 0,
                 "pending": True,
+                "put_started": False,
                 "prior_ics": body,
                 "prior_etag": etag,
                 "commitment_id": action.commitment_id,
@@ -501,14 +535,27 @@ class ICloudCalendarProvider:
             self._undos[action.idempotency_key] = undo_record
             self.store.put("calendar_undo", action.idempotency_key, undo_record)
             try:
+                self._replace_ledger(
+                    action.idempotency_key,
+                    {**intent, "put_started": True},
+                )
+                # From this point onward a request has been sent or may be in
+                # flight; any exception must be reconciled as potentially landed.
                 put_attempted = True
                 new_etag = self.client.put(link["href"], updated, etag)
             except CalendarConflict:
+                recorded = self.ledger.get(action.idempotency_key)
+                if recorded is not None and recorded.get("pending"):
+                    self._replace_ledger(
+                        action.idempotency_key,
+                        {**recorded, "pending": False, "state": "refused", "put_started": False},
+                    )
                 return self._result(
                     action,
                     success=False,
                     detail="calendar event changed before the conditional write (412)",
                     href=link["href"],
+                    side_effect=False,
                 )
             if not new_etag:
                 _, new_etag = self.client.get(link["href"])
@@ -528,10 +575,24 @@ class ICloudCalendarProvider:
         except UnsupportedTimezone:
             return self._result(action, success=False, detail="unsupported_timezone")
         except CalendarError as exc:
+            if put_attempted:
+                raise
+            recorded = self.ledger.get(action.idempotency_key)
+            if recorded is not None and recorded.get("pending"):
+                self._replace_ledger(
+                    action.idempotency_key,
+                    {**recorded, "pending": False, "state": "refused", "put_started": False},
+                )
             return self._result(action, success=False, detail=str(exc))
         except Exception as exc:
             if put_attempted:
                 raise
+            recorded = self.ledger.get(action.idempotency_key)
+            if recorded is not None and recorded.get("pending"):
+                self._replace_ledger(
+                    action.idempotency_key,
+                    {**recorded, "pending": False, "state": "refused", "put_started": False},
+                )
             return self._result(
                 action, success=False, detail=f"Calendar write refused: {type(exc).__name__}"
             )
@@ -547,14 +608,11 @@ class ICloudCalendarProvider:
                 finalized = {
                     **recorded,
                     "pending": False,
+                    "state": "verified",
                     "new_etag": etag,
                     "verification_failed": not result.success,
                 }
-                replace = getattr(self.ledger, "replace", None)
-                if replace is None:
-                    self.ledger[action.idempotency_key] = finalized
-                else:
-                    replace(action.idempotency_key, finalized)
+                self._replace_ledger(action.idempotency_key, finalized)
             undo = self._undos.get(action.idempotency_key)
             if undo is not None:
                 self._undos[action.idempotency_key] = {**undo, "new_etag": etag}
@@ -579,6 +637,8 @@ class ICloudCalendarProvider:
                 }
         if record is None:
             raise KeyError(idempotency_key)
+        if not record.get("new_etag"):
+            raise CalendarError("nothing verified to undo")
         _, etag = self.client.get(record["href"])
         expected = record.get("new_etag")
         if not etag:
@@ -589,6 +649,8 @@ class ICloudCalendarProvider:
         parsed = Calendar.from_ical(record["prior_ics"])
         event = next((item for item in parsed.walk() if item.name == "VEVENT"), None)
         interval = _event_interval(event) if event is not None else None
+        if interval and isinstance(interval[0], datetime) and isinstance(interval[1], datetime):
+            interval = (_localize_datetime(interval[0]), _localize_datetime(interval[1]))
         return {
             "status": "UNDONE",
             "href": record["href"],
@@ -623,6 +685,7 @@ class CalendarWatcher:
         self.skipped_all_day = 0
         self.skipped_recurring = 0
         self.stale_retained = 0
+        self.discarded_snapshots = 0
 
     def seconds_until_next_poll(self) -> float:
         import time
@@ -653,6 +716,7 @@ class CalendarWatcher:
                 persist_event_text=self.persist_event_text(),
             )
             if merged.get("stale"):
+                self.discarded_snapshots += 1
                 self._next_poll = time.monotonic() + self._interval
                 return self.status()
             self.imported = merged["imported"]
@@ -676,5 +740,6 @@ class CalendarWatcher:
             "skipped_all_day": self.skipped_all_day,
             "skipped_recurring": self.skipped_recurring,
             "stale_retained": self.stale_retained,
+            "discarded_snapshots": self.discarded_snapshots,
             "last_error_class": self.last_error_class,
         }

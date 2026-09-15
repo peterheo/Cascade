@@ -46,6 +46,7 @@ class MailWatcher:
         self._next_poll = 0.0
         self.last_poll_at: str | None = None
         self.last_error_class: str | None = None
+        self.last_error_code: str | None = None
         self.processed_count = 0
         loaded = store.load()
         self._messages = dict(loaded.mail_messages) if loaded else {}
@@ -77,6 +78,7 @@ class MailWatcher:
             "folder": self.folder,
             "last_poll_at": self.last_poll_at,
             "last_error_class": self.last_error_class,
+            "last_error_code": self.last_error_code,
             "processed_count": self.processed_count,
             "recent": recent,
         }
@@ -84,6 +86,7 @@ class MailWatcher:
     def _failure(self, exc: Exception, processed: int = 0, skipped: int = 0) -> PollResult:
         self.processed_count += processed
         self.last_error_class = type(exc).__name__
+        self.last_error_code = exc.code if isinstance(exc, ReasoningError) else None
         logger.error("mail poll failed: %s", type(exc).__name__)
         self._interval = min(900, self._interval * 2)
         self._next_poll = time.monotonic() + self._interval
@@ -170,6 +173,13 @@ class MailWatcher:
                 try:
                     result = await self.semantic.extract(request)
                 except Exception as exc:
+                    if isinstance(exc, ReasoningError) and exc.code in {
+                        "not_configured",
+                        "authentication",
+                    }:
+                        # Account-wide failures are retryable but must not consume
+                        # a message's permanent-poison budget or advance its cursor.
+                        return self._failure(exc, processed, skipped)
                     key = (cursor.uidvalidity, message.uid)
                     if not self._is_transient(exc):
                         attempts = self._poison_failures.get(key, 0) + 1
@@ -221,6 +231,7 @@ class MailWatcher:
 
         self.processed_count += processed
         self.last_error_class = None
+        self.last_error_code = None
         self._interval = self.poll_seconds
         self._next_poll = time.monotonic() + self._interval
         return PollResult(processed=processed, skipped=skipped)

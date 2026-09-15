@@ -33,11 +33,25 @@ for (const path of files) {
     throw new Error(
       `absolute filesystem path remains in ${relative(clientDir, path)}`,
     );
+  if (
+    path.endsWith('.html') &&
+    /<link\b[^>]+href=["'][^"']*fonts\.googleapis\.com[^"']*["']/i.test(
+      rewritten,
+    )
+  )
+    throw new Error(
+      `exported fonts were not self-hosted in ${relative(clientDir, path)}; the build-time font download may have failed, so rerun npm run build:export`,
+    );
   for (const match of rewritten.matchAll(fontUrlPattern)) {
     const url = match[0].split(/[?#]/, 1)[0];
     if (/\.(?:woff2?|ttf|otf)$/.test(url)) fontUrls.add(url);
   }
 }
+
+if (fontUrls.size === 0)
+  throw new Error(
+    'exported fonts were not self-hosted; the build-time font download may have failed, so rerun npm run build:export',
+  );
 
 for (const url of fontUrls) {
   const file = join(clientDir, url.slice(1));

@@ -93,7 +93,7 @@ export async function createPreference(
   input: CreatePreference,
 ): Promise<Preference> {
   if (!isLive())
-    throw new Error('Preferences can only be changed in a local workspace.');
+    throw new Error('Preferences can only be changed in a live workspace.');
   return localRequest<Preference>('/v1/preferences', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -102,7 +102,7 @@ export async function createPreference(
 
 export async function deletePreference(id: string): Promise<void> {
   if (!isLive())
-    throw new Error('Preferences can only be changed in a local workspace.');
+    throw new Error('Preferences can only be changed in a live workspace.');
   await localRequest<null>(`/v1/preferences/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });

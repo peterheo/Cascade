@@ -224,6 +224,7 @@ def test_execution_history_and_provider_ledger_survive_restart(tmp_path):
 
     service_b = _durable_service(db_path, ledger_path)
     assert service_b.executions[completed.id] == completed
+    assert service_b.ledger_orphan_entries() == ()
     step = next(step for step in completed.steps if step.call is not None)
     action = step.call.action
     provider = service_b.gateway.providers[action.provider]
@@ -287,3 +288,58 @@ def test_provider_write_gap_is_rolled_back_and_reported_once_as_orphan(tmp_path)
         sum(item["type"] == "ledger.orphan_detected" for item in restarted_again.audit)
         == orphan_audit_count
     )
+
+
+def _approved_durable_execution(db_path, ledger_path):
+    service, incident, plan = _planned_durable_service(db_path, ledger_path)
+    pending = service.execute(plan.id, service.world.version, "user")
+    request = pending.approval_request
+    assert request is not None
+    service.approve(
+        request.id,
+        "user",
+        tuple(item.action_id for item in request.items),
+        request.total_amount,
+    )
+    return service, incident, plan
+
+
+@pytest.mark.parametrize("failure_point", ("resolution", "audit"))
+def test_approval_flow_provider_gap_restores_memory_and_reports_orphans(tmp_path, failure_point):
+    db_path = tmp_path / f"gateway-{failure_point}.db"
+    ledger_path = tmp_path / f"ledger-{failure_point}.db"
+    service, _, plan = _approved_durable_execution(db_path, ledger_path)
+    before_world = service.world
+    before_executions = service.executions.copy()
+    before_approvals = service.approvals.copy()
+
+    if failure_point == "resolution":
+        service._record_resolution = lambda record: (_ for _ in ()).throw(
+            RuntimeError("resolution record unavailable")
+        )
+        expected_message = "resolution record"
+    else:
+        service._record_audit = lambda body: (_ for _ in ()).throw(
+            RuntimeError("audit record unavailable")
+        )
+        expected_message = "audit record"
+
+    with pytest.raises(RuntimeError, match=expected_message):
+        service.execute(plan.id, service.world.version, "user")
+
+    assert service.world == before_world
+    assert service.executions == before_executions
+    assert service.approvals == before_approvals
+    assert len(list(service.gateway.providers["mock_transfer"].ledger.items())) == 1
+    persisted = SqliteStore(db_path).load()
+    assert persisted is not None
+    assert persisted.world == before_world
+    assert persisted.executions == before_executions
+
+    restarted = _durable_service(db_path, ledger_path)
+    assert len(restarted.ledger_orphan_entries()) == 4
+    assert sum(item["type"] == "ledger.orphan_detected" for item in restarted.audit) == 4
+
+    restarted_again = _durable_service(db_path, ledger_path)
+    assert len(restarted_again.ledger_orphan_entries()) == 4
+    assert sum(item["type"] == "ledger.orphan_detected" for item in restarted_again.audit) == 4

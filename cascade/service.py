@@ -125,6 +125,10 @@ class CascadeService:
             for execution in self.executions.values()
             for step in execution.steps
             if step.call is not None
+            and (
+                step.status == "EXECUTED"
+                or (step.call.result is not None and step.call.result.side_effect)
+            )
         }
         with self.lock, self.store.transaction():
             for provider, key, value in all_entries:
@@ -319,35 +323,45 @@ class CascadeService:
                 actor=actor,
                 policy=self.permissions,
             )
-            result = self.executor.execute(
-                self.world,
-                plan,
-                incident_id,
-                context,
-                tuple(self.approvals.values()),
-            )
-            if result.approval_request is not None:
-                self.approvals[result.approval_request.id] = result.approval_request
-                self.store.put("approval", result.approval_request.id, result.approval_request)
-            if result.world.version != self.world.version:
-                self.world = result.world
-                self._save_world()
-                self._reconcile(evaluate(self.world))
-            if result.status == "COMPLETED" and incident_id:
-                incident = self.incident(incident_id)
-                if incident.status == "OPEN":
-                    resolved = incident.model_copy(
-                        update={
-                            "status": "RESOLVED",
-                            "resolved_at": datetime.now(UTC),
-                            "resolution_note": f"Recovery plan {plan.id} executed and verified.",
-                        }
-                    )
-                    self._replace_incident(resolved)
-                    self._save_incident(resolved)
-            self.executions[result.id] = result
             try:
+                result = self.executor.execute(
+                    self.world,
+                    plan,
+                    incident_id,
+                    context,
+                    tuple(self.approvals.values()),
+                )
+                if result.approval_request is not None:
+                    self.approvals[result.approval_request.id] = result.approval_request
+                    self.store.put("approval", result.approval_request.id, result.approval_request)
+                if result.world.version != self.world.version:
+                    self.world = result.world
+                    self._save_world()
+                    self._reconcile(evaluate(self.world))
+                if result.status == "COMPLETED" and incident_id:
+                    incident = self.incident(incident_id)
+                    if incident.status == "OPEN":
+                        resolved = incident.model_copy(
+                            update={
+                                "status": "RESOLVED",
+                                "resolved_at": datetime.now(UTC),
+                                "resolution_note": (
+                                    f"Recovery plan {plan.id} executed and verified."
+                                ),
+                            }
+                        )
+                        self._replace_incident(resolved)
+                        self._save_incident(resolved)
+                self.executions[result.id] = result
                 self.store.put("execution", result.id, result)
+                if result.status == "COMPLETED" and plan.id in self.searches:
+                    severity = self.incident(incident_id).severity if incident_id else None
+                    self._record_resolution(
+                        record_execution(self.searches[plan.id], result, severity)
+                    )
+                self._record_audit(
+                    {"type": "recovery.executed", "result": result.model_dump(mode="json")}
+                )
             except BaseException:
                 # A provider ledger commits independently. If the service transaction
                 # fails after that write, restore the in-memory view as well so the
@@ -359,12 +373,6 @@ class CascadeService:
                 self.approvals = before_approvals
                 self.executions = before_executions
                 raise
-            if result.status == "COMPLETED" and plan.id in self.searches:
-                severity = self.incident(incident_id).severity if incident_id else None
-                self._record_resolution(record_execution(self.searches[plan.id], result, severity))
-            self._record_audit(
-                {"type": "recovery.executed", "result": result.model_dump(mode="json")}
-            )
             if result.approval_request is not None:
                 self.stream.publish(
                     "approval.required",

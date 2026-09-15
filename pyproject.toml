@@ -13,6 +13,7 @@ dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 cascade-demo = "cascade.demo:main"
 cascade-reason = "cascade.reasoning.cli:main"
 cascade-eval = "cascade.evals.harness:main"
+cascade-hash-password = "cascade.security.auth:hash_password_cli"
 
 [build-system]
 requires = ["hatchling"]

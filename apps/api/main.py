@@ -3,7 +3,7 @@ import os
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field, ValidationError
@@ -19,6 +19,7 @@ from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
 from cascade.reasoning.service import SemanticService
 from cascade.security.approvals import ApprovalError
+from cascade.security.auth import AuthManager
 from cascade.service import CascadeService, ConflictError
 from cascade.tools.demo import demo_gateway
 
@@ -62,8 +63,12 @@ class IncidentApproveRequest(Record):
 
 
 def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
+    auth = AuthManager("gateway")
     app = FastAPI(
-        title="Cascade", version="0.4.0", description="Deterministic recovery with Nemotron"
+        title="Cascade",
+        version="0.4.0",
+        description="Deterministic recovery with Nemotron",
+        dependencies=[Depends(auth.dependency)],
     )
     db_path = os.environ.get("CASCADE_DB")
     ledger_path = os.environ.get("CASCADE_LEDGER_DB")
@@ -74,6 +79,8 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     semantic = SemanticService(service, reasoner)
     # Exposed for tests and for anything that has the app but not the closure.
     app.state.service = service
+    app.state.auth = auth
+    auth.register_routes(app)
     register_preference_routes(app, service)
     register_privacy_routes(app, semantic)
 

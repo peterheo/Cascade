@@ -237,14 +237,19 @@ it from the repository root with `deploy/oracle/deploy-web.sh`.
 
 ## Known limitations
 
-Resource conflicts and authentication are not implemented yet. Plans, searches, approvals,
+Resource conflicts are not implemented yet. When `CASCADE_AUTH_REQUIRED=1`, the gateway and
+simulation require a signed session cookie. The owner password hash is supplied through
+`CASCADE_OWNER_PASSWORD_HASH`; an optional read-only demo account uses
+`CASCADE_DEMO_PASSWORD_HASH`, and sessions are signed with `CASCADE_SESSION_SECRET`.
+Plans, searches, approvals,
 executions, and fixture provider ledgers remain process-local in the React simulation; no real
 booking, refund or message is ever sent. The gateway sandbox is enforced in-process,
 so it constrains Cascade's executor rather than the operating system. In the React
 workspace, security denials are read from the gateway's sandbox, and simulation
 executions don't pass through that sandbox, so the security callout stays empty there.
-`PATCH /v1/privacy` is process-wide and unauthenticated until sign-in lands, so any visitor
-can pause live inference for everyone.
+Authentication is disabled when `CASCADE_AUTH_REQUIRED` is unset, preserving local development
+and existing tests. The deployment sets it to `1`; missing owner credentials or a session secret
+fail closed at startup. `PATCH /v1/privacy` is owner-only when authentication is enabled.
 Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness
 refers only to the queried inventory and operators.

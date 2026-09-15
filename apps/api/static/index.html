@@ -7,6 +7,17 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
+    <section id="login" class="login-screen" hidden>
+      <form id="login-form" class="login-card">
+        <p class="eyebrow">CASCADE PERSONAL AI</p>
+        <h1>Sign in to your workspace</h1>
+        <p>Use the owner password or the read-only demo login.</p>
+        <label for="login-password">Password</label>
+        <input id="login-password" class="input" type="password" autocomplete="current-password" required />
+        <p id="login-error" class="error-banner" role="alert" hidden></p>
+        <button class="button primary" type="submit">Sign in</button>
+      </form>
+    </section>
     <header class="bar">
       <div class="brand">
         <span class="mark" aria-hidden="true"></span>
@@ -17,6 +28,8 @@
       </div>
       <div class="bar-actions">
         <span id="version" class="pill">version —</span>
+        <span id="role" class="pill" hidden></span>
+        <button id="logout" class="button ghost" type="button" hidden>Log out</button>
         <button id="inject" class="button primary">Simulate flight delay</button>
         <button id="reset-hint" class="button ghost" type="button" title="State is in memory">
           Restart the API to reset

@@ -35,6 +35,10 @@ export type Preference = {
   created_at?: string;
   updated_at?: string;
 };
+export type PrivacySettings = {
+  live_inference: boolean;
+  persist_event_text: boolean;
+};
 export type CreatePreference = Pick<
   Preference,
   'statement' | 'directive' | 'value'
@@ -105,6 +109,22 @@ export async function deletePreference(id: string): Promise<void> {
     throw new Error('Preferences can only be changed in a live workspace.');
   await localRequest<null>(`/simulation/v1/preferences/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+  });
+}
+
+export async function getPrivacy(): Promise<PrivacySettings> {
+  if (!isLive()) return { live_inference: false, persist_event_text: false };
+  return localRequest<PrivacySettings>('/simulation/v1/privacy');
+}
+
+export async function updatePrivacy(
+  updates: Partial<PrivacySettings>,
+): Promise<PrivacySettings> {
+  if (!isLive())
+    throw new Error('Privacy settings can only be changed in a live workspace.');
+  return localRequest<PrivacySettings>('/simulation/v1/privacy', {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
   });
 }
 import data from './preview-data.json' with { type: 'json' };

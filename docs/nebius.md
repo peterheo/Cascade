@@ -50,8 +50,10 @@ Model and regional structured-output compatibility still require the live test.
 
 ## API workflow
 
-`GET /v1/reasoning/status` reports configuration and whether this process has
-completed a real, schema-valid model response. Configured is not the same as verified.
+`GET /v1/reasoning/status` reports configuration, whether this process has
+completed a real, schema-valid model response, and whether live inference is enabled.
+Configured is not the same as verified. `GET /v1/privacy` and `PATCH /v1/privacy` expose
+process-local controls for pausing live inference and opting into raw event-text retention.
 
 Preview a natural-language event:
 
@@ -113,8 +115,9 @@ Future live testing may require tuning the token budget for a model's reasoning 
 
 Audit entries retain structured outputs, task/model IDs, timing, attempts, token
 usage when supplied, and hashes of context, prompt/schema, and output. Credentials
-and provider error bodies are never included. Event text is retained in the local
-audit as source evidence. Memory and audit storage still reset on restart.
+and provider error bodies are never included. Event text is represented by a SHA-256
+digest in the local audit by default; `persist_event_text` is an explicit process-local
+opt-in. Memory and audit storage still reset on restart.
 
 ## Verification
 

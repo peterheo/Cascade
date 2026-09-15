@@ -1,15 +1,18 @@
 import asyncio
+import hashlib
 from uuid import uuid4
 
 from cascade.domain.models import Mutation, SourceRef
 from cascade.graph.traversal import descendants
 from cascade.planning.models import SearchPolicy
+from cascade.reasoning.context import compare_context, extract_context, strategy_context
 from cascade.reasoning.models import (
     AssistedPlanningResult,
     ExtractedChange,
     ExtractionResult,
     NaturalEventRequest,
     PlanComparison,
+    PrivacySettings,
     ProposedStrategy,
 )
 from cascade.reasoning.nebius import ReasoningError, ReasoningProvider
@@ -17,10 +20,31 @@ from cascade.reasoning.prompts import COMPARE, EXTRACT, STRATEGY
 from cascade.service import CascadeService, ConflictError
 
 
+def _privacy_safe(value):
+    """Remove raw model excerpts from persisted audit payloads."""
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            if key == "evidence_quote":
+                safe["evidence_quote_sha256"] = hashlib.sha256(str(item).encode()).hexdigest()
+            else:
+                safe[key] = _privacy_safe(item)
+        return safe
+    if isinstance(value, list):
+        return [_privacy_safe(item) for item in value]
+    return value
+
+
 class SemanticService:
-    def __init__(self, core: CascadeService, provider: ReasoningProvider):
+    def __init__(
+        self,
+        core: CascadeService,
+        provider: ReasoningProvider,
+        privacy: PrivacySettings | None = None,
+    ):
         self.core = core
         self.provider = provider
+        self.privacy = privacy or PrivacySettings()
         self.lock = asyncio.Lock()
         self.requests: dict[str, NaturalEventRequest] = {}
         self.extractions: dict[str, ExtractionResult] = {}
@@ -33,6 +57,8 @@ class SemanticService:
 
     async def _call(self, task, schema, prompt, context):
         try:
+            if not self.privacy.live_inference:
+                raise ReasoningError("disabled", "Live inference is disabled by privacy settings.")
             parsed, trace = await self.provider.structured(task, schema, prompt, context)
         except ReasoningError as exc:
             with self.core.lock:
@@ -45,7 +71,7 @@ class SemanticService:
                 {
                     "type": "reasoning.completed",
                     "call": trace.model_dump(mode="json"),
-                    "output": parsed.model_dump(mode="json"),
+                    "output": _privacy_safe(parsed.model_dump(mode="json")),
                 }
             )
         return parsed, trace
@@ -73,13 +99,7 @@ class SemanticService:
                 "extract",
                 ExtractedChange,
                 EXTRACT,
-                {
-                    "event_text": request.text,
-                    "world": {
-                        "version": snapshot.version,
-                        "commitments": [c.model_dump(mode="json") for c in snapshot.commitments],
-                    },
-                },
+                extract_context(request.text, snapshot),
             )
             mutation = None
             event_result = None
@@ -137,14 +157,17 @@ class SemanticService:
                 self.requests[request.event_id] = request
                 self.extractions[result.id] = result
                 self.event_to_extraction[request.event_id] = result.id
-                self.core._record_audit(
-                    {
-                        "type": "event.extracted",
-                        "event_id": request.event_id,
-                        "text": request.text,
-                        "result": result.model_dump(mode="json"),
-                    }
-                )
+                audit_result = _privacy_safe(result.model_dump(mode="json"))
+                audit_entry = {
+                    "type": "event.extracted",
+                    "event_id": request.event_id,
+                    "result": audit_result,
+                }
+                if self.privacy.persist_event_text:
+                    audit_entry["text"] = request.text
+                else:
+                    audit_entry["text_sha256"] = hashlib.sha256(request.text.encode()).hexdigest()
+                self.core._record_audit(audit_entry)
                 return result
 
     async def confirm(self, extraction_id: str, expected_version: int) -> ExtractionResult:
@@ -204,20 +227,7 @@ class SemanticService:
                     "strategy",
                     ProposedStrategy,
                     STRATEGY,
-                    {
-                        "incident": incident.model_dump(mode="json"),
-                        "commitments": [c.model_dump(mode="json") for c in snapshot.commitments],
-                        "intents": [i.model_dump(mode="json") for i in snapshot.intents],
-                        "policy": policy.model_dump(mode="json"),
-                        "affected_ids": affected,
-                        "allowed_resolutions": [
-                            "PRESERVED",
-                            "RESCHEDULED",
-                            "SUBSTITUTED",
-                            "COMPENSATED",
-                            "ABANDONED",
-                        ],
-                    },
+                    strategy_context(incident, snapshot, policy, affected),
                 )
                 traces.append(trace)
                 ids = [s.commitment_id for s in proposal.suggestions]
@@ -247,11 +257,7 @@ class SemanticService:
                         "compare",
                         PlanComparison,
                         COMPARE,
-                        {
-                            "candidates": [p.model_dump(mode="json") for p in planning.candidates],
-                            "policy": policy.model_dump(mode="json"),
-                            "notes": planning.notes,
-                        },
+                        compare_context(planning, policy),
                     )
                     traces.append(trace)
                     valid_ids = {p.id for p in planning.candidates}

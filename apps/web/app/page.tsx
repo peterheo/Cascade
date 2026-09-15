@@ -42,18 +42,22 @@ import {
   api,
   createPreference,
   deletePreference,
+  getPrivacy,
   isLive,
   listPreferences,
   securitySandbox,
   subscribeToWorkspaceEvents,
+  updatePrivacy,
 } from '@/lib/cascade-api';
 import type {
   Preference,
   PreferenceDirective,
+  PrivacySettings,
   SandboxDenial,
   SandboxState,
 } from '@/lib/cascade-api';
 import type {
+  ContextManifest,
   Workspace,
   Plan,
   Execution,
@@ -154,6 +158,29 @@ function denialForAudit(a: Audit, denials: SandboxDenial[]) {
   return denials.find((denial) => evidence.includes(denial.action_id));
 }
 
+function ManifestDetails({ manifest }: { manifest: ContextManifest }) {
+  return (
+    <details className="reasoning-manifest">
+      <summary>What Nemotron saw</summary>
+      <div className="manifest-grid">
+        <span>Task</span>
+        <strong>{manifest.task}</strong>
+        <span>Model</span>
+        <strong>{manifest.model}</strong>
+        <span>Context</span>
+        <strong>{manifest.bytes_sent.toLocaleString()} bytes</strong>
+        <span>Entities</span>
+        <strong>{manifest.entity_ids.length || 'None'}</strong>
+      </div>
+      <p>Fields: {manifest.fields.join(', ')}</p>
+      {manifest.entity_ids.length > 0 && (
+        <p>IDs: {manifest.entity_ids.join(', ')}</p>
+      )}
+      <code>{manifest.input_hash.slice(0, 16)}…</code>
+    </details>
+  );
+}
+
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace>(
       replay.initial as unknown as Workspace,
@@ -171,6 +198,10 @@ export default function Home() {
     ),
     [extraction, setExtraction] = useState<Extraction | null>(null),
     [sandbox, setSandbox] = useState<SandboxState | null>(null),
+    [privacy, setPrivacy] = useState<PrivacySettings>({
+      live_inference: false,
+      persist_event_text: false,
+    }),
     [preferences, setPreferences] = useState<Preference[]>([]),
     [preferenceText, setPreferenceText] = useState(''),
     [preferenceDirective, setPreferenceDirective] =
@@ -254,6 +285,17 @@ export default function Home() {
   }, [live]);
   useEffect(() => {
     let active = true;
+    void getPrivacy()
+      .then((result) => {
+        if (active) setPrivacy(result);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [live]);
+  useEffect(() => {
+    let active = true;
     void listPreferences()
       .then((result) => {
         if (active) setPreferences(result);
@@ -311,6 +353,16 @@ export default function Home() {
       setError((e as Error).message);
     } finally {
       setPreferenceBusy('');
+    }
+  }
+  async function toggleLiveInference(enabled: boolean) {
+    const previous = privacy;
+    setPrivacy((current) => ({ ...current, live_inference: enabled }));
+    try {
+      setPrivacy(await updatePrivacy({ live_inference: enabled }));
+    } catch (e) {
+      setPrivacy(previous);
+      setError((e as Error).message);
     }
   }
   async function perform(label: string, action: () => Promise<void>) {
@@ -511,7 +563,9 @@ export default function Home() {
           <i className={`status-dot ${connected ? 'green' : ''}`} />
           {live
             ? workspace.reasoning?.configured
-              ? 'Nemotron connected'
+              ? privacy.live_inference
+                ? 'Nemotron connected'
+                : 'Nemotron paused'
               : 'Local workspace'
             : 'Interactive demo'}
           <span className="avatar">CH</span>
@@ -538,6 +592,27 @@ export default function Home() {
               )}
             </h1>
           </div>
+          {live && (
+            <div className="reasoning-controls">
+              <span className="reasoning-pill">
+                {workspace.reasoning?.configured
+                  ? privacy.live_inference
+                    ? 'Nemotron enabled'
+                    : 'Nemotron paused'
+                  : 'Nemotron unavailable'}
+              </span>
+              <label className="privacy-toggle">
+                <input
+                  type="checkbox"
+                  checked={privacy.live_inference}
+                  onChange={(event) =>
+                    void toggleLiveInference(event.target.checked)
+                  }
+                />
+                Live inference
+              </label>
+            </div>
+          )}
           <div className="heading-actions">
             {live && (
               <Button
@@ -1247,6 +1322,19 @@ export default function Home() {
                             <summary>Inspect evidence</summary>
                             <pre>{JSON.stringify(a, null, 2)}</pre>
                           </details>
+                          {(() => {
+                            const call = a.call as
+                              | { manifest?: ContextManifest }
+                              | undefined;
+                            const result = a.result as
+                              | { model_call?: { manifest?: ContextManifest } }
+                              | undefined;
+                            const manifest =
+                              call?.manifest || result?.model_call?.manifest;
+                            return live && manifest ? (
+                              <ManifestDetails manifest={manifest} />
+                            ) : null;
+                          })()}
                         </div>
                         <span className="audit-index">
                           {String(workspace.audit.length - i).padStart(2, '0')}
@@ -1372,6 +1460,9 @@ export default function Home() {
             <div className="extraction-result">
               <strong>{extraction.status.replaceAll('_', ' ')}</strong>
               <p>{extraction.extraction.explanation}</p>
+              {live && extraction.model_call.manifest && (
+                <ManifestDetails manifest={extraction.model_call.manifest} />
+              )}
               {extraction.mutation && (
                 <>
                   <p>

@@ -11,7 +11,7 @@ import httpx
 from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
 
 from cascade.domain.models import Record
-from cascade.reasoning.models import ModelCall, ReasoningTask
+from cascade.reasoning.models import ContextManifest, ModelCall, ReasoningTask
 
 
 class ReasoningError(Exception):
@@ -92,6 +92,7 @@ class NebiusReasoner:
             "model": self.settings.model,
             "planning_model": self.settings.planning_model,
             "live_verified": self.transport is None and self.successful_calls > 0,
+            "live_inference": getattr(self, "live_inference", True),
         }
 
     async def structured[T: BaseModel](
@@ -101,11 +102,17 @@ class NebiusReasoner:
         system: str,
         context: dict,
     ) -> tuple[T, ModelCall]:
+        if not getattr(self, "live_inference", True):
+            raise ReasoningError("disabled", "Live inference is disabled by privacy settings.")
         if not self.settings.api_key.get_secret_value():
             raise ReasoningError("not_configured", "Set NEBIUS_API_KEY to enable live reasoning.")
         model = self.settings.model if task == "extract" else self.settings.planning_model
         schema_json = schema.model_json_schema()
         prompt = json.dumps(context, ensure_ascii=False, sort_keys=True)
+        input_hash = hashlib.sha256(prompt.encode()).hexdigest()
+        fields = getattr(context, "fields", tuple(sorted(context)))
+        entity_ids = getattr(context, "entity_ids", ())
+        minimized = bool(getattr(context, "minimized", False))
         if len(prompt) > 200000:
             raise ReasoningError(
                 "context_limit", "Reasoning context exceeds the bounded input limit."
@@ -200,13 +207,22 @@ class NebiusReasoner:
                                 model=model,
                                 attempts=attempt,
                                 elapsed_ms=int((monotonic() - started) * 1000),
-                                input_hash=hashlib.sha256(prompt.encode()).hexdigest(),
+                                input_hash=input_hash,
                                 prompt_hash=hashlib.sha256(
                                     (system + json.dumps(schema_json, sort_keys=True)).encode()
                                 ).hexdigest(),
                                 output_hash=hashlib.sha256(content.encode()).hexdigest(),
                                 input_tokens=usage.get("prompt_tokens"),
                                 output_tokens=usage.get("completion_tokens"),
+                                manifest=ContextManifest(
+                                    task=task,
+                                    model=model,
+                                    fields=tuple(fields),
+                                    entity_ids=tuple(entity_ids),
+                                    bytes_sent=len(prompt.encode()),
+                                    input_hash=input_hash,
+                                    minimized=minimized,
+                                ),
                             )
                         except (ValueError, TypeError, KeyError, IndexError, ValidationError):
                             raise ReasoningError(

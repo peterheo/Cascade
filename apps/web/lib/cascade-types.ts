@@ -110,6 +110,23 @@ export type Approval = {
   additional_cost: string;
 };
 export type Audit = { type: string; [key: string]: unknown };
+export type ContextManifest = {
+  task: 'extract' | 'strategy' | 'compare';
+  model: string;
+  fields: string[];
+  entity_ids: string[];
+  bytes_sent: number;
+  input_hash: string;
+  minimized: boolean;
+};
+export type ModelCall = {
+  provider: string;
+  model: string;
+  attempts: number;
+  elapsed_ms: number;
+  input_hash: string;
+  manifest?: ContextManifest;
+};
 export type Comparison = {
   plans: { plan_id: string; explanation: string; tradeoff: string }[];
   recommended_plan_id: string | null;
@@ -127,7 +144,11 @@ export type Workspace = {
   approvals: Approval[];
   executions: Execution[];
   audit: Audit[];
-  reasoning: { configured: boolean; live_verified: boolean } | null;
+  reasoning: {
+    configured: boolean;
+    live_verified: boolean;
+    live_inference: boolean;
+  } | null;
 };
 export type Extraction = {
   id: string;
@@ -143,5 +164,6 @@ export type Extraction = {
     confidence: number;
     evidence_quote: string;
   };
+  model_call: ModelCall;
   event_result: { incident: Incident | null } | null;
 };

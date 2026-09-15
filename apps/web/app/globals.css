@@ -1148,6 +1148,65 @@ footer span:last-child {
   cursor: pointer;
   margin-top: 10px;
 }
+.reasoning-manifest {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #2e405d;
+  border-radius: 6px;
+  background: #111a28;
+}
+.reasoning-manifest summary {
+  margin-top: 0;
+  color: #a8c4f3;
+}
+.manifest-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin-top: 9px;
+  font-size: 0.75rem;
+}
+.manifest-grid span {
+  color: #8398bb;
+}
+.manifest-grid strong {
+  font-size: 0.75rem;
+  color: #c3d3ec;
+  overflow-wrap: anywhere;
+}
+.reasoning-manifest p,
+.reasoning-manifest code {
+  display: block;
+  margin: 8px 0 0;
+  color: #9faec6;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.privacy-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #9faec6;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.privacy-toggle input {
+  accent-color: #8db5ff;
+}
+.reasoning-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.reasoning-pill {
+  padding: 5px 9px;
+  border: 1px solid #2e405d;
+  border-radius: 999px;
+  color: #a8c4f3;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
 .security-details {
   margin: 7px 0;
 }

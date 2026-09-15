@@ -58,6 +58,27 @@ function text(tag, className, content) {
   return node;
 }
 
+function manifestDetails(manifest) {
+  if (!manifest) return null;
+  const details = document.createElement("details");
+  details.className = "reasoning-manifest";
+  details.append(text("summary", null, "What Nemotron saw"));
+  const grid = text("div", "manifest-grid");
+  for (const [label, value] of [
+    ["Task", manifest.task],
+    ["Model", manifest.model],
+    ["Context", `${Number(manifest.bytes_sent).toLocaleString()} bytes`],
+    ["Entities", manifest.entity_ids?.length || "None"],
+  ])
+    grid.append(text("span", null, label), text("strong", null, String(value)));
+  details.append(grid);
+  details.append(text("p", null, `Fields: ${(manifest.fields || []).join(", ")}`));
+  if (manifest.entity_ids?.length)
+    details.append(text("p", null, `IDs: ${manifest.entity_ids.join(", ")}`));
+  details.append(text("code", null, `${String(manifest.input_hash).slice(0, 16)}…`));
+  return details;
+}
+
 // ---------------------------------------------------------------- rendering
 
 function renderSummary() {
@@ -489,6 +510,8 @@ function renderExtraction() {
         `output ${call.output_hash.slice(0, 12)}…`,
     ),
   );
+  const manifest = manifestDetails(call.manifest);
+  if (manifest) body.append(manifest);
 
   if (result.mutation && result.status !== "APPLIED") {
     const confirm = text("div", "total");
@@ -505,9 +528,13 @@ function renderExtraction() {
 async function renderReasoningStatus() {
   const pill = el("reasoning-status");
   try {
-    const status = await call("/v1/reasoning/status");
+    const [status, privacy] = await Promise.all([
+      call("/v1/reasoning/status"),
+      call("/v1/privacy"),
+    ]);
+    el("live-inference").checked = privacy.live_inference;
     pill.textContent = status.configured
-      ? `${status.model} ${status.live_verified ? "· live verified" : "· configured"}`
+      ? `${status.model} ${status.live_inference ? "· enabled" : "· disabled"}`
       : "Nemotron not configured — set NEBIUS_API_KEY";
   } catch {
     pill.textContent = "reasoning status unavailable";
@@ -524,6 +551,10 @@ async function renderAudit() {
     const detail =
       entry.incident_id || entry.event_id || entry.approval?.id || entry.result?.status || "";
     if (detail) item.append(document.createTextNode(` — ${detail}`));
+    const manifest = manifestDetails(
+      entry.call?.manifest || entry.result?.model_call?.manifest,
+    );
+    if (manifest) item.append(manifest);
     list.append(item);
   }
   const box = el("sandbox-body");
@@ -719,6 +750,16 @@ function listen() {
 
 el("inject").addEventListener("click", (event) => inject(event.currentTarget));
 el("read-message").addEventListener("click", (event) => readMessage(event.currentTarget));
+el("live-inference").addEventListener("change", (event) => {
+  const input = event.currentTarget;
+  call("/v1/privacy", {
+    method: "PATCH",
+    body: JSON.stringify({ live_inference: input.checked }),
+  }).catch((error) => {
+    input.checked = !input.checked;
+    toast(error.message);
+  });
+});
 renderReasoningStatus();
 refresh()
   .then(listen)

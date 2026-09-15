@@ -204,6 +204,16 @@ UI tests assert that every endpoint the page calls exists on the API.
 1. PostgreSQL persistence and durable audit storage.
 2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
 
+Package layout follows the design's domain/graph/constraints split. `cascade/service.py`
+is the temporary in-memory orchestration boundary; `apps/api` is the HTTP adapter.
+
+## Deploy
+
+The live Oracle deployment is at https://cascade.150.136.6.100.nip.io. Update it with
+`ssh opc@<host> 'bash -s' < deploy/oracle/update.sh`. Secrets live in
+`/etc/cascade/cascade.env` on the box; the install and update scripts are in
+`deploy/oracle/`.
+
 ## Known limitations
 
 Resource conflicts, authentication, and persistent storage are not implemented yet.
@@ -251,9 +261,6 @@ change under the same set.
 
 The hosted replay fixture has no model comparison or sandbox denials, so the Recommended
 badge and the security callout render only against a local backend.
-
-Package layout follows the design's domain/graph/constraints split. `cascade/service.py`
-is the temporary in-memory orchestration boundary; `apps/api` is the HTTP adapter.
 
 ## Stepwise simulation workspace
 

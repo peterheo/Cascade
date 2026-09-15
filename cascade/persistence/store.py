@@ -33,6 +33,8 @@ RecordKind = Literal[
     "approval",
     "execution",
     "ledger_orphan",
+    "mail_message",
+    "mail_cursor",
 ]
 LogStream = Literal["resolution", "audit"]
 
@@ -58,6 +60,8 @@ class PersistedState:
     approvals: dict[str, ApprovalRequest] = field(default_factory=dict)
     executions: dict[str, ExecutionResult] = field(default_factory=dict)
     ledger_orphans: dict[str, dict] = field(default_factory=dict)
+    mail_messages: dict[str, dict] = field(default_factory=dict)
+    mail_cursors: dict[str, dict] = field(default_factory=dict)
     latest_search_id: str | None = None
 
 
@@ -286,6 +290,10 @@ class SqliteStore:
                     state.executions[row["key"]] = ExecutionResult.model_validate(body)
                 elif kind == "ledger_orphan":
                     state.ledger_orphans[row["key"]] = body
+                elif kind == "mail_message":
+                    state.mail_messages[row["key"]] = body
+                elif kind == "mail_cursor":
+                    state.mail_cursors[row["key"]] = body
                 else:
                     raise ValueError(f"unknown persisted record kind: {kind}")
             for row in self._connection.execute("SELECT stream, body FROM log ORDER BY seq"):
@@ -310,6 +318,8 @@ class SqliteStore:
                 and not state.approvals
                 and not state.executions
                 and not state.ledger_orphans
+                and not state.mail_messages
+                and not state.mail_cursors
             ):
                 return None
             return state

@@ -33,12 +33,18 @@ async function call(path, options) {
 function showLogin() {
   el("login").hidden = false;
   document.body.classList.add("auth-required");
+  document.body.classList.remove("demo-account");
+  el("demo-notice").hidden = true;
+  el("role").hidden = true;
+  el("logout").hidden = true;
 }
 
 function hideLogin(role) {
   state.authRole = role;
   el("login").hidden = true;
   document.body.classList.remove("auth-required");
+  document.body.classList.toggle("demo-account", role === "demo");
+  el("demo-notice").hidden = role !== "demo";
   const roleNode = el("role");
   roleNode.textContent = role;
   roleNode.hidden = false;
@@ -562,6 +568,36 @@ function renderExtraction() {
   }
 }
 
+function renderMail(recent) {
+  const section = el("mail-feed");
+  const list = el("mail-list");
+  list.replaceChildren();
+  if (!recent?.length) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  for (const item of [...recent].reverse()) {
+    const row = text("div", "mail-row");
+    const received = String(item.received_at || "").slice(0, 16).replace("T", " ");
+    row.append(text("span", null, `${item.status || "UNKNOWN"} · ${received}`));
+    const open = text("button", "button ghost", "Open extraction");
+    open.disabled = !item.extraction_id;
+    open.addEventListener("click", async () => {
+      try {
+        const result = await call(`/v1/extractions/${item.extraction_id}`);
+        state.extraction = result.extraction;
+        renderExtraction();
+        el("extraction-body").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (error) {
+        toast(error.message);
+      }
+    });
+    row.append(open);
+    list.append(row);
+  }
+}
+
 async function renderReasoningStatus() {
   const pill = el("reasoning-status");
   try {
@@ -617,10 +653,11 @@ async function renderAudit() {
 // ------------------------------------------------------------------ actions
 
 async function refresh() {
-  const [{ world, assessment }, incidents, skills] = await Promise.all([
+  const [{ world, assessment }, incidents, skills, mail] = await Promise.all([
     call("/v1/state"),
     call("/v1/incidents"),
     call("/v1/skills"),
+    call("/v1/connectors/mail/status"),
   ]);
   state.skills = skills;
   state.world = world;
@@ -633,6 +670,7 @@ async function refresh() {
   renderApproval();
   renderExecution();
   renderExtraction();
+  renderMail(mail.recent);
   await renderAudit();
 }
 
@@ -815,9 +853,11 @@ el("login-form").addEventListener("submit", async (event) => {
     });
     form.reset();
     hideLogin(result.role);
-    await renderReasoningStatus();
-    await refresh();
-    listen();
+    if (result.role === "owner") {
+      await renderReasoningStatus();
+      await refresh();
+      listen();
+    }
   } catch (error) {
     const message = el("login-error");
     message.textContent = error.message;
@@ -832,5 +872,9 @@ el("logout").addEventListener("click", async () => {
   showLogin();
 });
 authenticate()
-  .then((ok) => (ok ? Promise.all([renderReasoningStatus(), refresh()]).then(listen) : null))
+  .then((ok) =>
+    ok && state.authRole === "owner"
+      ? Promise.all([renderReasoningStatus(), refresh()]).then(listen)
+      : null,
+  )
   .catch((error) => toast(error.message));

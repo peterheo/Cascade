@@ -395,7 +395,10 @@ def test_calendar_provider_refreshes_etag_when_put_has_no_etag(tmp_path):
     result = ToolGateway({"icloud": provider}).execute(action, context).result
     assert result and result.success
     assert links["ical_one"]["etag"] == '"2"'
-    assert store.load().calendar_undos["step-no-header"]["new_etag"] == '"2"'
+    loaded = store.load()
+    assert loaded is not None
+    assert loaded.calendar_links["ical_one"]["etag"] == '"2"'
+    assert loaded.calendar_undos["step-no-header"]["new_etag"] == '"2"'
     assert ledger.get("icloud", "step-no-header")["new_etag"] == '"2"'
 
 
@@ -666,5 +669,11 @@ def test_empty_mode_clears_persisted_demo_records(tmp_path, monkeypatch):
     monkeypatch.setenv("CASCADE_GATEWAY_WORLD", "empty")
     with TestClient(create_app()) as client:
         assert client.get("/v1/state").json()["world"]["commitments"] == []
+    loaded = SqliteStore(db_path).load()
+    assert loaded is not None
+    assert loaded.events == {}
+    assert loaded.incidents == []
+    assert loaded.approvals == {}
+    assert loaded.executions == {}
     with TestClient(create_app()) as client:
         assert client.get("/v1/state").json()["world"]["commitments"] == []

@@ -10,6 +10,8 @@ from cascade.memory.resolutions import record_dismissal
 from cascade.persistence import MemoryStore, SqliteStore
 from cascade.service import CascadeService, ConflictError
 from cascade.tools.demo import demo_gateway
+from cascade.tools.gateway import ToolGateway, ToolResult
+from cascade.tools.ledger import ProviderLedgerView, SqliteLedger
 
 
 def test_memory_store_is_empty_and_sqlite_round_trips_every_record_kind_and_stream(tmp_path):
@@ -288,6 +290,103 @@ def test_provider_write_gap_is_rolled_back_and_reported_once_as_orphan(tmp_path)
         sum(item["type"] == "ledger.orphan_detected" for item in restarted_again.audit)
         == orphan_audit_count
     )
+
+
+def test_calendar_write_gap_after_put_survives_service_rollback_and_restart(tmp_path):
+    class CalendarFixtureProvider:
+        kind = "icloud"
+
+        def __init__(self, ledger):
+            self.ledger = ProviderLedgerView(ledger, "icloud")
+
+        def check(self, action):
+            return ToolResult(
+                success=True,
+                provider="icloud",
+                operation=action.operation,
+                raw_result_ref="calendar-fixture:check",
+                detail="calendar fixture available",
+                observed_start_at=action.postcondition.start_at,
+                observed_end_at=action.postcondition.end_at,
+            )
+
+        def apply(self, action):
+            self.ledger[action.idempotency_key] = {
+                "reference": f"calendar:{action.idempotency_key}",
+                "operation": action.operation,
+                "start_at": action.postcondition.start_at,
+                "end_at": action.postcondition.end_at,
+                "refund": 0,
+                "pending": True,
+                "put_started": True,
+            }
+            return ToolResult(
+                success=True,
+                provider="icloud",
+                operation=action.operation,
+                external_reference=f"calendar:{action.idempotency_key}",
+                side_effect=True,
+                raw_result_ref="calendar-fixture:apply",
+                detail="calendar fixture write landed",
+            )
+
+        def verify(self, action):
+            record = self.ledger[action.idempotency_key]
+            return ToolResult(
+                success=True,
+                provider="icloud",
+                operation=action.operation,
+                external_reference=record["reference"],
+                raw_result_ref="calendar-fixture:verify",
+                detail="calendar fixture read back",
+                observed_start_at=record["start_at"],
+                observed_end_at=record["end_at"],
+            )
+
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    ledger = SqliteLedger(ledger_path)
+    gateway = demo_gateway(ledger_path=ledger_path)
+    gateway.sandbox = None
+    gateway.providers["icloud"] = CalendarFixtureProvider(ledger)
+    service = CascadeService(demo_world(), gateway=gateway, store=SqliteStore(db_path))
+    incident = service.ingest(delay_event()).incident
+    planning = service.plan(incident.id, service.world.version)
+    plan = planning.candidates[0]
+    linked = next(option for option in plan.actions if option.resolution != "PRESERVED")
+    service.calendar_links[linked.commitment_id] = {
+        "calendar_href": "https://caldav.test/home/",
+        "href": "https://caldav.test/home/event.ics",
+        "event_uid": "event-1",
+        "etag": '"1"',
+    }
+    pending = service.execute(plan.id, service.world.version, "owner")
+    assert pending.approval_request is not None
+    service.approve(
+        pending.approval_request.id,
+        "owner",
+        tuple(item.action_id for item in pending.approval_request.items),
+        pending.approval_request.total_amount,
+    )
+    original_put = service.store.put
+
+    def fail_execution_record(kind, key, record):
+        if kind == "execution":
+            raise RuntimeError("execution record unavailable")
+        return original_put(kind, key, record)
+
+    service.store.put = fail_execution_record
+    with pytest.raises(RuntimeError, match="execution record"):
+        service.execute(plan.id, service.world.version, "owner")
+    assert len(service.executions) == 1
+    assert next(iter(service.executions.values())).status == "AWAITING_APPROVAL"
+
+    restarted = CascadeService(
+        demo_world(),
+        gateway=ToolGateway({"icloud": CalendarFixtureProvider(SqliteLedger(ledger_path))}),
+        store=SqliteStore(db_path),
+    )
+    assert any(item["provider"] == "icloud" for item in restarted.ledger_orphan_entries())
 
 
 def _approved_durable_execution(db_path, ledger_path):

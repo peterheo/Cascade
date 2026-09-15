@@ -54,12 +54,14 @@ class CascadeService:
         initial_world = persisted.world if persisted and persisted.world is not None else world
         evaluate(initial_world)
         self.world = initial_world
+        self.lock = RLock()
         self.events: dict[str, tuple[Mutation, EventResult]] = persisted.events if persisted else {}
         self.incidents: list[Incident] = persisted.incidents if persisted else []
         self.audit: list[dict] = persisted.audit if persisted else []
-        self.lock = RLock()
         self.plans: dict[str, CandidatePlan] = {}
-        self.plan_incidents: dict[str, tuple[str, ...]] = {}
+        self.plan_incidents: dict[str, tuple[str, ...]] = (
+            dict(persisted.plan_incidents) if persisted else {}
+        )
         self.planner = planner or demo_planner()
         self.gateway = gateway or demo_gateway()
         self.executor = PlanExecutor(self.gateway)
@@ -70,10 +72,24 @@ class CascadeService:
         self.searches: dict[str, PlanningResult] = {}
         self.latest_planning: PlanningResult | None = None
         self.stream = EventStream()
-        self.approvals: dict[str, ApprovalRequest] = {}
-        self.executions: dict[str, ExecutionResult] = {}
+        self.approvals: dict[str, ApprovalRequest] = dict(persisted.approvals) if persisted else {}
+        self.executions: dict[str, ExecutionResult] = (
+            dict(persisted.executions) if persisted else {}
+        )
+        self.ledger_orphans: dict[str, dict] = dict(persisted.ledger_orphans) if persisted else {}
+        if persisted:
+            for planning in persisted.searches.values():
+                for candidate in planning.candidates:
+                    self.plans[candidate.id] = candidate
+                    self.searches[candidate.id] = planning
+            self.latest_planning = (
+                persisted.searches.get(persisted.latest_search_id)
+                if persisted.latest_search_id
+                else None
+            )
         if persisted is None or persisted.world is None:
             self.store.save_world(self.world)
+        self._detect_ledger_orphans()
 
     def _record_audit(self, body: dict) -> None:
         with self.store.transaction():
@@ -93,6 +109,45 @@ class CascadeService:
 
     def _save_preference(self, preference: Preference) -> None:
         self.store.put("preference", preference.id, preference)
+
+    def _detect_ledger_orphans(self) -> None:
+        """Report durable provider writes that no persisted execution can explain."""
+        all_entries = []
+        for provider_name, provider in self.gateway.providers.items():
+            ledger = getattr(provider, "ledger", None)
+            if ledger is None:
+                continue
+            all_entries.extend((provider_name, key, value) for key, value in ledger.items())
+        if not all_entries:
+            return
+        referenced = {
+            (step.call.action.provider, step.call.action.idempotency_key)
+            for execution in self.executions.values()
+            for step in execution.steps
+            if step.call is not None
+            and (
+                step.status == "EXECUTED"
+                or (step.call.result is not None and step.call.result.side_effect)
+            )
+        }
+        with self.lock, self.store.transaction():
+            for provider, key, value in all_entries:
+                orphan_key = f"{provider}:{key}"
+                if (provider, key) in referenced or orphan_key in self.ledger_orphans:
+                    continue
+                body = {
+                    "type": "ledger.orphan_detected",
+                    "provider": provider,
+                    "idempotency_key": key,
+                    "reference": value.get("reference"),
+                }
+                self.ledger_orphans[orphan_key] = body
+                self.store.put("ledger_orphan", orphan_key, body)
+                self._record_audit(body)
+
+    def ledger_orphan_entries(self) -> tuple[dict, ...]:
+        with self.lock:
+            return tuple(self.ledger_orphans.values())
 
     def incident(self, incident_id: str) -> Incident:
         with self.lock:
@@ -220,6 +275,7 @@ class CascadeService:
                 raise ConflictError("the world changed; request approval against current state")
             decided = grant(request, actor, approved_action_ids, acknowledged_amount)
             self.approvals[request_id] = decided
+            self.store.put("approval", request_id, decided)
             self._record_audit(
                 {"type": "approval.granted", "approval": decided.model_dump(mode="json")}
             )
@@ -234,6 +290,7 @@ class CascadeService:
                 raise KeyError(request_id)
             decided = reject(self.approvals[request_id], actor, note)
             self.approvals[request_id] = decided
+            self.store.put("approval", request_id, decided)
             self._record_audit(
                 {"type": "approval.rejected", "approval": decided.model_dump(mode="json")}
             )
@@ -245,6 +302,12 @@ class CascadeService:
     def execute(self, plan_id: str, expected_version: int, actor: str) -> ExecutionResult:
         """Run one approved plan. Side effects commit step by step, never in bulk."""
         with self.lock, self.store.transaction():
+            before_world = self.world
+            before_incidents = self.incidents.copy()
+            before_resolutions = self.resolutions.copy()
+            before_audit = self.audit.copy()
+            before_approvals = self.approvals.copy()
+            before_executions = self.executions.copy()
             if plan_id not in self.plans:
                 raise KeyError(plan_id)
             if expected_version != self.world.version:
@@ -260,38 +323,56 @@ class CascadeService:
                 actor=actor,
                 policy=self.permissions,
             )
-            result = self.executor.execute(
-                self.world,
-                plan,
-                incident_id,
-                context,
-                tuple(self.approvals.values()),
-            )
-            if result.approval_request is not None:
-                self.approvals[result.approval_request.id] = result.approval_request
-            if result.world.version != self.world.version:
-                self.world = result.world
-                self._save_world()
-                self._reconcile(evaluate(self.world))
-            if result.status == "COMPLETED" and incident_id:
-                incident = self.incident(incident_id)
-                if incident.status == "OPEN":
-                    resolved = incident.model_copy(
-                        update={
-                            "status": "RESOLVED",
-                            "resolved_at": datetime.now(UTC),
-                            "resolution_note": f"Recovery plan {plan.id} executed and verified.",
-                        }
+            try:
+                result = self.executor.execute(
+                    self.world,
+                    plan,
+                    incident_id,
+                    context,
+                    tuple(self.approvals.values()),
+                )
+                if result.approval_request is not None:
+                    self.approvals[result.approval_request.id] = result.approval_request
+                    self.store.put("approval", result.approval_request.id, result.approval_request)
+                if result.world.version != self.world.version:
+                    self.world = result.world
+                    self._save_world()
+                    self._reconcile(evaluate(self.world))
+                if result.status == "COMPLETED" and incident_id:
+                    incident = self.incident(incident_id)
+                    if incident.status == "OPEN":
+                        resolved = incident.model_copy(
+                            update={
+                                "status": "RESOLVED",
+                                "resolved_at": datetime.now(UTC),
+                                "resolution_note": (
+                                    f"Recovery plan {plan.id} executed and verified."
+                                ),
+                            }
+                        )
+                        self._replace_incident(resolved)
+                        self._save_incident(resolved)
+                self.executions[result.id] = result
+                self.store.put("execution", result.id, result)
+                if result.status == "COMPLETED" and plan.id in self.searches:
+                    severity = self.incident(incident_id).severity if incident_id else None
+                    self._record_resolution(
+                        record_execution(self.searches[plan.id], result, severity)
                     )
-                    self._replace_incident(resolved)
-                    self._save_incident(resolved)
-            self.executions[result.id] = result
-            if result.status == "COMPLETED" and plan.id in self.searches:
-                severity = self.incident(incident_id).severity if incident_id else None
-                self._record_resolution(record_execution(self.searches[plan.id], result, severity))
-            self._record_audit(
-                {"type": "recovery.executed", "result": result.model_dump(mode="json")}
-            )
+                self._record_audit(
+                    {"type": "recovery.executed", "result": result.model_dump(mode="json")}
+                )
+            except BaseException:
+                # A provider ledger commits independently. If the service transaction
+                # fails after that write, restore the in-memory view as well so the
+                # next restart reports the ledger entry as an orphan.
+                self.world = before_world
+                self.incidents = before_incidents
+                self.resolutions = before_resolutions
+                self.audit = before_audit
+                self.approvals = before_approvals
+                self.executions = before_executions
+                raise
             if result.approval_request is not None:
                 self.stream.publish(
                     "approval.required",
@@ -353,6 +434,14 @@ class CascadeService:
             self.searches.update({p.id: result for p in result.candidates})
             self.latest_planning = result
             self.plan_incidents[incident.id] = tuple(p.id for p in result.candidates)
+            self.store.put("search", result.id, result)
+            for candidate in result.candidates:
+                self.store.put("plan", candidate.id, {"search_id": result.id})
+            self.store.put(
+                "incident_plans",
+                incident.id,
+                {"plan_ids": list(self.plan_incidents[incident.id])},
+            )
             if incident.status == "OPEN":
                 updated_incident = incident.model_copy(update={"severity": classify(result)})
                 self._replace_incident(updated_incident)

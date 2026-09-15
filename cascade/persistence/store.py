@@ -17,10 +17,23 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from cascade.domain.models import EventResult, Incident, Mutation, World
+from cascade.execution.models import ExecutionResult
 from cascade.memory.preferences import Preference
 from cascade.memory.resolutions import ResolutionRecord
+from cascade.planning.models import PlanningResult
+from cascade.security.approvals import ApprovalRequest
 
-RecordKind = Literal["event", "incident", "preference"]
+RecordKind = Literal[
+    "event",
+    "incident",
+    "preference",
+    "search",
+    "plan",
+    "incident_plans",
+    "approval",
+    "execution",
+    "ledger_orphan",
+]
 LogStream = Literal["resolution", "audit"]
 
 
@@ -39,6 +52,13 @@ class PersistedState:
     preferences: dict[str, Preference] = field(default_factory=dict)
     resolutions: list[ResolutionRecord] = field(default_factory=list)
     audit: list[dict] = field(default_factory=list)
+    searches: dict[str, PlanningResult] = field(default_factory=dict)
+    plan_searches: dict[str, str] = field(default_factory=dict)
+    plan_incidents: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    approvals: dict[str, ApprovalRequest] = field(default_factory=dict)
+    executions: dict[str, ExecutionResult] = field(default_factory=dict)
+    ledger_orphans: dict[str, dict] = field(default_factory=dict)
+    latest_search_id: str | None = None
 
 
 class StateStore(Protocol):
@@ -203,6 +223,8 @@ class SqliteStore:
                 "mutation": record[0].model_dump(mode="json"),
                 "result": record[1].model_dump(mode="json"),
             }
+        elif isinstance(record, dict):
+            body = record
         else:
             body = record.model_dump(mode="json")
         self._connection.execute(
@@ -251,6 +273,19 @@ class SqliteStore:
                     state.incidents.append(Incident.model_validate(body))
                 elif kind == "preference":
                     state.preferences[row["key"]] = Preference.model_validate(body)
+                elif kind == "search":
+                    state.searches[row["key"]] = PlanningResult.model_validate(body)
+                    state.latest_search_id = row["key"]
+                elif kind == "plan":
+                    state.plan_searches[row["key"]] = str(body["search_id"])
+                elif kind == "incident_plans":
+                    state.plan_incidents[row["key"]] = tuple(body["plan_ids"])
+                elif kind == "approval":
+                    state.approvals[row["key"]] = ApprovalRequest.model_validate(body)
+                elif kind == "execution":
+                    state.executions[row["key"]] = ExecutionResult.model_validate(body)
+                elif kind == "ledger_orphan":
+                    state.ledger_orphans[row["key"]] = body
                 else:
                     raise ValueError(f"unknown persisted record kind: {kind}")
             for row in self._connection.execute("SELECT stream, body FROM log ORDER BY seq"):
@@ -269,6 +304,12 @@ class SqliteStore:
                 and not state.preferences
                 and not state.resolutions
                 and not state.audit
+                and not state.searches
+                and not state.plan_searches
+                and not state.plan_incidents
+                and not state.approvals
+                and not state.executions
+                and not state.ledger_orphans
             ):
                 return None
             return state

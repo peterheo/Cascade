@@ -70,7 +70,9 @@ status AWAITING_APPROVAL describes the next product step only.
 The plan/replan API requires an expected world version. Saved plans include the
 version used for search and are marked stale on retrieval after an event. Audit
 entries include provider evidence, limits, rejection counts, and candidate worlds.
-Detailed per-branch execution traces and persistent storage remain future work.
+Detailed per-branch execution traces remain future work; gateway searches, approvals,
+execution history, and provider ledger durability are covered by the persistence
+milestone in Phase 5.
 
 ## Phase 3 — semantic reasoning
 

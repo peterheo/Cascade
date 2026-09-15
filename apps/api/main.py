@@ -19,6 +19,7 @@ from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningPr
 from cascade.reasoning.service import SemanticService
 from cascade.security.approvals import ApprovalError
 from cascade.service import CascadeService, ConflictError
+from cascade.tools.demo import demo_gateway
 
 STATIC = Path(__file__).parent / "static"
 
@@ -64,8 +65,10 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         title="Cascade", version="0.4.0", description="Deterministic recovery with Nemotron"
     )
     db_path = os.environ.get("CASCADE_DB")
+    ledger_path = os.environ.get("CASCADE_LEDGER_DB")
     store = SqliteStore(Path(db_path)) if db_path else MemoryStore()
-    service = CascadeService(demo_world(), store=store)
+    gateway = demo_gateway(ledger_path=Path(ledger_path)) if ledger_path else demo_gateway()
+    service = CascadeService(demo_world(), gateway=gateway, store=store)
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
     # Exposed for tests and for anything that has the app but not the closure.
@@ -203,6 +206,10 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     def audit():
         with service.lock:
             return tuple(service.audit)
+
+    @app.get("/v1/ledger/orphans")
+    def ledger_orphans():
+        return service.ledger_orphan_entries()
 
     @app.post("/v1/incidents/{incident_id}/plan")
     @app.post("/v1/incidents/{incident_id}/replan")

@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from cascade.tools.adapters.fixtures import FixtureProvider
 from cascade.tools.gateway import ToolAction, ToolResult
+from cascade.tools.ledger import LedgerBackend, ProviderLedgerView
 
 
 class FixtureBookingProvider(FixtureProvider):
@@ -13,10 +14,13 @@ class FixtureBookingProvider(FixtureProvider):
     back rather than trusting the write's own claim.
     """
 
-    def __init__(self, kind: str, fixture: dict):
+    def __init__(self, kind: str, fixture: dict, ledger: LedgerBackend | None = None):
         self.kind = kind
         self.fixture = fixture
-        self.ledger: dict[str, dict] = {}
+        self.ledger: dict[str, dict] = (
+            ProviderLedgerView(ledger, self.name) if ledger is not None else {}
+        )
+        self.ledger_backend = ledger
         # Explicit fault injection for the demo and evals; nothing here is random.
         self.withdrawn: set[str] = set()
         self.failing: set[str] = set()

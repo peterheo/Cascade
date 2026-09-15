@@ -63,7 +63,7 @@ def test_demo_is_read_only_on_gateway_but_can_use_simulation(monkeypatch):
         assert test_client.post("/v1/auth/login", json={"password": "demo-password"}).json() == {
             "role": "demo"
         }
-        assert test_client.get("/v1/state").status_code == 200
+        assert test_client.get("/v1/state").status_code == 403
         assert test_client.post("/v1/demo/scenarios/flight_delay/inject").status_code == 403
         assert test_client.get("/simulation/v1/workspace").status_code == 200
         assert (

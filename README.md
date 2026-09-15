@@ -118,6 +118,23 @@ audits keep a SHA-256 digest of the submitted text by default; set `persist_even
 when retaining the raw text is appropriate. Reasoning audits include a context manifest with
 the task, allowlisted fields, entity IDs, byte count, and input hash, never the rendered prompt.
 
+### Authentication
+
+Set `CASCADE_AUTH_REQUIRED=1` to require sign-in. The owner password and session signing key
+come from `CASCADE_OWNER_PASSWORD_HASH` and `CASCADE_SESSION_SECRET`; an optional
+`CASCADE_DEMO_PASSWORD_HASH` enables a read-only demo role. Password hashes are generated with
+`uv run cascade-hash-password`. The gateway (`/v1`) is owner-only because it can receive
+personal data; the simulation app (`/simulation/v1`) is available to both roles, with privacy
+changes reserved for the owner. Auth routes remain available at `/v1/auth/login`,
+`/v1/auth/logout`, and `/v1/auth/me`.
+
+When `CASCADE_ICLOUD_USER` and `CASCADE_ICLOUD_APP_PASSWORD` are set, the gateway polls the
+iCloud IMAP folder named by `CASCADE_ICLOUD_MAIL_FOLDER` (default `Cascade`) every
+`CASCADE_MAIL_POLL_SECONDS` seconds (default 90, clamped to 60–3600). New messages are sent
+through extraction with confirmation still required; `GET /v1/connectors/mail/status` reports
+the watcher state. Mail credentials are never logged or persisted, and message text is retained
+only when `persist_event_text` is enabled in the process-local privacy settings.
+
 `POST /v1/incidents/{id}/replan` reruns against the requested current version.
 `GET /v1/recovery-plans/{id}` returns a saved candidate and marks it stale after a
 world change. Planning appends audit evidence while leaving commitments untouched.

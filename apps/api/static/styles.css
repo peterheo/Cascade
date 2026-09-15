@@ -661,3 +661,16 @@ select.button {
 .auth-required > main {
   display: none;
 }
+
+.demo-notice {
+  display: none;
+}
+
+body.demo-account .demo-notice {
+  display: block;
+  margin: 20px auto;
+  max-width: 900px;
+  padding: 12px 16px;
+  color: var(--muted);
+  text-align: center;
+}

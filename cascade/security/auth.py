@@ -156,7 +156,7 @@ class AuthManager:
 
     def _allowed(self, request: Request, session: Session) -> bool:
         if self.scope == "gateway":
-            return request.method in {"GET", "HEAD", "OPTIONS"} or session.role == "owner"
+            return session.role == "owner"
         # The simulation is the judge-facing demo surface. Both roles can use it;
         # only the process-wide privacy switch remains owner-only.
         if request.method == "PATCH" and self._route_path(request) == "/v1/privacy":

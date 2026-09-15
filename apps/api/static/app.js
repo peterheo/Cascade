@@ -33,12 +33,18 @@ async function call(path, options) {
 function showLogin() {
   el("login").hidden = false;
   document.body.classList.add("auth-required");
+  document.body.classList.remove("demo-account");
+  el("demo-notice").hidden = true;
+  el("role").hidden = true;
+  el("logout").hidden = true;
 }
 
 function hideLogin(role) {
   state.authRole = role;
   el("login").hidden = true;
   document.body.classList.remove("auth-required");
+  document.body.classList.toggle("demo-account", role === "demo");
+  el("demo-notice").hidden = role !== "demo";
   const roleNode = el("role");
   roleNode.textContent = role;
   roleNode.hidden = false;
@@ -815,9 +821,11 @@ el("login-form").addEventListener("submit", async (event) => {
     });
     form.reset();
     hideLogin(result.role);
-    await renderReasoningStatus();
-    await refresh();
-    listen();
+    if (result.role === "owner") {
+      await renderReasoningStatus();
+      await refresh();
+      listen();
+    }
   } catch (error) {
     const message = el("login-error");
     message.textContent = error.message;
@@ -832,5 +840,9 @@ el("logout").addEventListener("click", async () => {
   showLogin();
 });
 authenticate()
-  .then((ok) => (ok ? Promise.all([renderReasoningStatus(), refresh()]).then(listen) : null))
+  .then((ok) =>
+    ok && state.authRole === "owner"
+      ? Promise.all([renderReasoningStatus(), refresh()]).then(listen)
+      : null,
+  )
   .catch((error) => toast(error.message));

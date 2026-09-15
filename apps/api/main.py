@@ -1,5 +1,6 @@
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from pydantic import Field, ValidationError
 
 from apps.api.preferences import register_preference_routes
 from apps.api.privacy import register_privacy_routes
+from cascade.connectors.mail import ImapMailSource
+from cascade.connectors.mail_watcher import MailWatcher
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
@@ -77,6 +80,47 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     service = CascadeService(demo_world(), gateway=gateway, store=store)
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
+    mail_watcher = None
+    mail_user = os.environ.get("CASCADE_ICLOUD_USER")
+    mail_password = os.environ.get("CASCADE_ICLOUD_APP_PASSWORD")
+    if mail_user and mail_password:
+        folder = os.environ.get("CASCADE_ICLOUD_MAIL_FOLDER", "Cascade")
+        try:
+            configured_poll = int(os.environ.get("CASCADE_MAIL_POLL_SECONDS", "90"))
+        except ValueError:
+            configured_poll = 90
+        poll_seconds = min(3600, max(60, configured_poll))
+        mail_watcher = MailWatcher(
+            ImapMailSource(mail_user, mail_password, folder=folder),
+            semantic,
+            store,
+            folder=folder,
+            poll_seconds=poll_seconds,
+        )
+    app.state.mail_watcher = mail_watcher
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        task = None
+        if mail_watcher is not None:
+
+            async def poll_loop():
+                while True:
+                    await asyncio.to_thread(mail_watcher.poll_once)
+                    await asyncio.sleep(max(1.0, mail_watcher.seconds_until_next_poll()))
+
+            task = asyncio.create_task(poll_loop())
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    app.router.lifespan_context = lifespan
     # Exposed for tests and for anything that has the app but not the closure.
     app.state.service = service
     app.state.auth = auth
@@ -225,6 +269,18 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     @app.get("/v1/ledger/orphans")
     def ledger_orphans():
         return service.ledger_orphan_entries()
+
+    @app.get("/v1/connectors/mail/status")
+    def mail_status():
+        if mail_watcher is None:
+            return {
+                "enabled": False,
+                "folder": os.environ.get("CASCADE_ICLOUD_MAIL_FOLDER", "Cascade"),
+                "last_poll_at": None,
+                "last_error_class": None,
+                "processed_count": 0,
+            }
+        return mail_watcher.status()
 
     @app.post("/v1/incidents/{incident_id}/plan")
     @app.post("/v1/incidents/{incident_id}/replan")

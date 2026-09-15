@@ -92,7 +92,6 @@ class NebiusReasoner:
             "model": self.settings.model,
             "planning_model": self.settings.planning_model,
             "live_verified": self.transport is None and self.successful_calls > 0,
-            "live_inference": getattr(self, "live_inference", True),
         }
 
     async def structured[T: BaseModel](
@@ -102,8 +101,6 @@ class NebiusReasoner:
         system: str,
         context: dict,
     ) -> tuple[T, ModelCall]:
-        if not getattr(self, "live_inference", True):
-            raise ReasoningError("disabled", "Live inference is disabled by privacy settings.")
         if not self.settings.api_key.get_secret_value():
             raise ReasoningError("not_configured", "Set NEBIUS_API_KEY to enable live reasoning.")
         model = self.settings.model if task == "extract" else self.settings.planning_model

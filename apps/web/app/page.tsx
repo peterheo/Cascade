@@ -202,6 +202,7 @@ export default function Home() {
       live_inference: false,
       persist_event_text: false,
     }),
+    [privacyLoaded, setPrivacyLoaded] = useState(false),
     [preferences, setPreferences] = useState<Preference[]>([]),
     [preferenceText, setPreferenceText] = useState(''),
     [preferenceDirective, setPreferenceDirective] =
@@ -242,6 +243,9 @@ export default function Home() {
   );
   const affected = new Set(incident?.affected_commitment_ids || []);
   const sandboxDenials = sandbox?.enforced ? sandbox.denials : [];
+  const inferenceEnabled = privacyLoaded
+    ? privacy.live_inference
+    : (workspace.reasoning?.live_inference ?? false);
   async function refresh() {
     const result = await api<Workspace>('/v1/workspace');
     setWorkspace(result);
@@ -284,10 +288,14 @@ export default function Home() {
     };
   }, [live]);
   useEffect(() => {
+    if (!live) return;
     let active = true;
     void getPrivacy()
       .then((result) => {
-        if (active) setPrivacy(result);
+        if (active) {
+          setPrivacy(result);
+          setPrivacyLoaded(true);
+        }
       })
       .catch(() => {});
     return () => {
@@ -563,7 +571,7 @@ export default function Home() {
           <i className={`status-dot ${connected ? 'green' : ''}`} />
           {live
             ? workspace.reasoning?.configured
-              ? privacy.live_inference
+              ? inferenceEnabled
                 ? 'Nemotron connected'
                 : 'Nemotron paused'
               : 'Local workspace'
@@ -592,11 +600,11 @@ export default function Home() {
               )}
             </h1>
           </div>
-          {live && (
+          {live && privacyLoaded && (
             <div className="reasoning-controls">
               <span className="reasoning-pill">
                 {workspace.reasoning?.configured
-                  ? privacy.live_inference
+                  ? inferenceEnabled
                     ? 'Nemotron enabled'
                     : 'Nemotron paused'
                   : 'Nemotron unavailable'}

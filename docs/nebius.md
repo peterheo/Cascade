@@ -117,7 +117,8 @@ Audit entries retain structured outputs, task/model IDs, timing, attempts, token
 usage when supplied, and hashes of context, prompt/schema, and output. Credentials
 and provider error bodies are never included. Event text is represented by a SHA-256
 digest in the local audit by default; `persist_event_text` is an explicit process-local
-opt-in. Memory and audit storage still reset on restart.
+opt-in. Gateway audit entries persist across restarts when `CASCADE_DB` is set; an
+in-memory deployment resets them on restart.
 
 ## Verification
 

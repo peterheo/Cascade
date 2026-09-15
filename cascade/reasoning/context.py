@@ -10,7 +10,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from cascade.domain.models import Incident, World
-from cascade.planning.models import PlanningResult, SearchPolicy
+from cascade.planning.models import SELECTABLE_RESOLUTIONS, PlanningResult, SearchPolicy
+
+ALLOWED_RESOLUTIONS = ("PRESERVED", *SELECTABLE_RESOLUTIONS)
 
 
 class ReasoningContext(dict):
@@ -89,6 +91,7 @@ def strategy_context(
             "intents": intents,
             "violations": violations,
             "policy": policy.model_dump(mode="json"),
+            "allowed_resolutions": list(ALLOWED_RESOLUTIONS),
         },
         fields=(
             "affected_ids",
@@ -102,6 +105,7 @@ def strategy_context(
             "intents[].importance",
             "violations[]",
             "policy",
+            "allowed_resolutions",
         ),
         entity_ids=(*affected, *intent_ids),
     )

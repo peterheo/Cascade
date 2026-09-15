@@ -572,6 +572,13 @@ def test_reasoning_contexts_are_minimized_and_manifests_match_wire_payload():
     assert {item["id"] for item in strategy_payload["commitments"]} == set(
         incident.affected_commitment_ids
     )
+    assert strategy_payload["allowed_resolutions"] == [
+        "PRESERVED",
+        "RESCHEDULED",
+        "SUBSTITUTED",
+        "COMPENSATED",
+        "ABANDONED",
+    ]
     assert not _contains_key(strategy_payload, "source")
     assert not _contains_key(strategy_payload, "intent_id")
     compare_payload = json.loads(_json_context(captured[2]))

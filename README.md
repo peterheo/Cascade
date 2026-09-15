@@ -243,6 +243,8 @@ booking, refund or message is ever sent. The gateway sandbox is enforced in-proc
 so it constrains Cascade's executor rather than the operating system. In the React
 workspace, security denials are read from the gateway's sandbox, and simulation
 executions don't pass through that sandbox, so the security callout stays empty there.
+`PATCH /v1/privacy` is process-wide and unauthenticated until sign-in lands, so any visitor
+can pause live inference for everyone.
 Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness
 refers only to the queried inventory and operators.

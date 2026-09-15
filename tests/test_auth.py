@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 
@@ -50,7 +51,13 @@ def test_cookie_tamper_and_expiry_are_rejected(monkeypatch):
         token = test_client.cookies.get("cascade_session")
     assert token
     with client(monkeypatch) as tampered:
-        tampered.headers["Cookie"] = f"cascade_session={token[:-1]}x"
+        payload_text, signature_text = token.split(".", 1)
+        payload = json.loads(auth_module._b64decode(payload_text))
+        payload["role"] = "demo"
+        tampered_payload = auth_module._b64encode(
+            json.dumps(payload, separators=(",", ":")).encode()
+        )
+        tampered.headers["Cookie"] = f"cascade_session={tampered_payload}.{signature_text}"
         assert tampered.get("/v1/state").status_code == 401
     with client(monkeypatch) as expired:
         token = expired.app.state.auth._token("owner", int(time.time()) - 1)

@@ -14,6 +14,7 @@ from cascade.persistence import StateStore
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import ReasoningError
 from cascade.reasoning.service import SemanticService
+from cascade.service import ConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,11 @@ class MailWatcher:
 
     @staticmethod
     def _is_transient(exc: Exception) -> bool:
-        return isinstance(exc, (ReasoningError, TimeoutError, ConnectionError, OSError))
+        if isinstance(exc, ConflictError):
+            return True
+        if isinstance(exc, ReasoningError):
+            return exc.code in {"timeout", "network", "unavailable", "5xx", "429"}
+        return isinstance(exc, (TimeoutError, ConnectionError, OSError))
 
     def _record_failed_message(self, message, digest: str, checkpoint: MailCursor) -> None:
         body = {

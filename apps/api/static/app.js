@@ -493,7 +493,7 @@ function renderExecution() {
       const undo = text("button", "button ghost", "Undo");
       undo.addEventListener("click", () =>
         guard(undo, async () => {
-          await call(`/v1/calendar/undo/${execution.id}`, { method: "POST" });
+          await call(`/v1/calendar/undo/${execution.id}/${step.id}`, { method: "POST" });
           toast("Calendar change undone.");
           await refresh();
         }),

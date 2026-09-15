@@ -96,29 +96,44 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     has_demo_world = any(c.source.source == "demo_fixture" for c in service.world.commitments)
     if world_mode == "empty" and has_demo_world:
         # Personal mode must never expose an itinerary persisted by the demo.
-        service.world = initial_world
-        service.incidents.clear()
-        service.plans.clear()
-        service.plan_incidents.clear()
-        service.approvals.clear()
-        service.executions.clear()
+        event_ids = tuple(service.events)
+        incident_ids = tuple(i.id for i in service.incidents)
+        plan_ids = tuple(service.plans)
+        search_ids = tuple(service.searches)
+        plan_incident_ids = tuple(service.plan_incidents)
+        approval_ids = tuple(service.approvals)
+        execution_ids = tuple(service.executions)
         calendar_ids = tuple(service.calendar_links)
-        service.calendar_links.clear()
-        service.calendar_metadata.clear()
-        for commitment_id in calendar_ids:
-            service.store.delete("calendar_link", commitment_id)
-            service.store.delete("calendar_metadata", commitment_id)
-        for incident in tuple(service.incidents):
-            service.store.delete("incident", incident.id)
-        for plan_id in tuple(service.plans):
-            service.store.delete("plan", plan_id)
-        for incident_id in tuple(service.plan_incidents):
-            service.store.delete("incident_plans", incident_id)
-        for request_id in tuple(service.approvals):
-            service.store.delete("approval", request_id)
-        for execution_id in tuple(service.executions):
-            service.store.delete("execution", execution_id)
-        service.store.save_world(initial_world)
+        with service.lock, service.store.transaction():
+            for event_id in event_ids:
+                service.store.delete("event", event_id)
+            for incident_id in incident_ids:
+                service.store.delete("incident", incident_id)
+            for plan_id in plan_ids:
+                service.store.delete("plan", plan_id)
+            for search_id in search_ids:
+                service.store.delete("search", search_id)
+            for incident_id in plan_incident_ids:
+                service.store.delete("incident_plans", incident_id)
+            for approval_id in approval_ids:
+                service.store.delete("approval", approval_id)
+            for execution_id in execution_ids:
+                service.store.delete("execution", execution_id)
+            for commitment_id in calendar_ids:
+                service.store.delete("calendar_link", commitment_id)
+                service.store.delete("calendar_metadata", commitment_id)
+            service.world = initial_world
+            service.incidents.clear()
+            service.plans.clear()
+            service.searches.clear()
+            service.latest_planning = None
+            service.plan_incidents.clear()
+            service.approvals.clear()
+            service.executions.clear()
+            service.events.clear()
+            service.calendar_links.clear()
+            service.calendar_metadata.clear()
+            service.store.save_world(initial_world)
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
     mail_watcher = None
@@ -411,29 +426,29 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(404, "unknown recovery plan") from exc
 
-    @app.post("/v1/calendar/undo/{execution_id}")
-    def undo_calendar(execution_id: str):
+    @app.post("/v1/calendar/undo/{execution_id}/{step_id}")
+    def undo_calendar(execution_id: str, step_id: str, session=Depends(auth.dependency)):
+        if session is not None and session.role != "owner":
+            raise HTTPException(403, "This action requires the owner role")
         execution = service.executions.get(execution_id)
         if execution is None:
             raise HTTPException(404, "unknown execution")
         provider = gateway.providers.get("icloud")
         if provider is None or not hasattr(provider, "undo"):
             raise HTTPException(409, "iCloud calendar is not enabled")
-        results = []
-        for step in reversed(execution.steps):
-            if step.call is None or step.call.action.provider != "icloud":
-                continue
-            try:
-                results.append(provider.undo(step.call.action.idempotency_key))
-            except KeyError as exc:
-                raise HTTPException(404, "calendar undo record not found") from exc
-            except CalendarConflict as exc:
-                raise HTTPException(409, str(exc)) from exc
-            except CalendarError as exc:
-                raise HTTPException(502, str(exc)) from exc
-        if not results:
-            raise HTTPException(409, "execution has no executed calendar steps")
-        return {"status": "UNDONE", "results": results}
+        step = next((item for item in execution.steps if item.id == step_id), None)
+        if step is None or step.call is None or step.call.action.provider != "icloud":
+            raise HTTPException(404, "unknown calendar step")
+        try:
+            outcome = provider.undo(step.call.action.idempotency_key)
+            service.record_calendar_undo(execution_id, step_id, outcome)
+            return outcome
+        except KeyError as exc:
+            raise HTTPException(404, "calendar undo record not found") from exc
+        except CalendarConflict as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except CalendarError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
     @app.get("/v1/approvals")
     def approvals():

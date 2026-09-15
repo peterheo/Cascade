@@ -70,7 +70,7 @@ class PlanExecutor:
 
     def __init__(self, gateway: ToolGateway, calendar_links: dict[str, dict] | None = None):
         self.gateway = gateway
-        self.calendar_links = calendar_links or {}
+        self.calendar_links = {} if calendar_links is None else calendar_links
 
     def actions(
         self, world: World, plan: CandidatePlan

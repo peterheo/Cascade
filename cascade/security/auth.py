@@ -117,10 +117,14 @@ class AuthManager:
             return None
         try:
             payload_text, signature_text = token.split(".", 1)
-            expected = hmac.new(self.secret, payload_text.encode("ascii"), hashlib.sha256).digest()
-            if not hmac.compare_digest(expected, _b64decode(signature_text)):
+            payload = _b64decode(payload_text)
+            signature = _b64decode(signature_text)
+            if _b64encode(payload) != payload_text or _b64encode(signature) != signature_text:
                 return None
-            payload = json.loads(_b64decode(payload_text))
+            expected = hmac.new(self.secret, payload_text.encode("ascii"), hashlib.sha256).digest()
+            if not hmac.compare_digest(expected, signature):
+                return None
+            payload = json.loads(payload)
             role, exp = payload["role"], int(payload["exp"])
             if role not in {"owner", "demo"} or exp <= int(time.time()):
                 return None

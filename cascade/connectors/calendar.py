@@ -27,6 +27,10 @@ class CalendarConflict(CalendarError):
     """The resource changed between the check and the conditional write."""
 
 
+class UnsupportedTimezone(CalendarError):
+    pass
+
+
 @dataclass(frozen=True)
 class CalendarEvent:
     commitment: Commitment
@@ -77,10 +81,16 @@ def _safe_href(collection: str, href: str) -> bool:
     return target_path.startswith(root_path)
 
 
-def _as_datetime(value):
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=None)
-    return None
+def _validate_discovered_url(url: str) -> str:
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or parsed.port is not None
+        or not (host == "caldav.icloud.com" or host.endswith(".icloud.com"))
+    ):
+        raise CalendarError("CalDAV discovery returned an unsafe URL")
+    return url
 
 
 def _event_interval(event: Event) -> tuple[datetime | date, datetime | date] | None:
@@ -159,8 +169,8 @@ def _replace_datetime(event: Event, name: str, value: datetime) -> None:
     if tzid:
         try:
             value = value.astimezone(ZoneInfo(str(tzid))).replace(tzinfo=None)
-        except (KeyError, ValueError):
-            value = value.replace(tzinfo=None)
+        except (KeyError, ValueError) as exc:
+            raise UnsupportedTimezone("unsupported_timezone") from exc
         prop = vDatetime(value)
         prop.params["TZID"] = str(tzid)
         event[name] = prop
@@ -189,7 +199,7 @@ class ICloudCalendarClient:
         return httpx.Client(
             auth=(self.username, self.app_password),
             transport=self.transport,
-            timeout=30,
+            timeout=httpx.Timeout(10.0, connect=5.0),
             follow_redirects=False,
         )
 
@@ -228,11 +238,13 @@ class ICloudCalendarClient:
             if not principal:
                 return None
             principal_url = _href(self.base_url, principal)
+            _validate_discovered_url(principal_url)
             second = self._request_xml(client, "PROPFIND", principal_url, home_xml, {"Depth": "0"})
             home = _property_href(ET.fromstring(second.text), "calendar-home-set")
             if not home:
                 return None
             home_url = _href(principal_url, home)
+            _validate_discovered_url(home_url)
             third = self._request_xml(client, "PROPFIND", home_url, list_xml, {"Depth": "1"})
             root = ET.fromstring(third.text)
             for response in (item for item in root.iter() if _local(item) == "response"):
@@ -240,6 +252,7 @@ class ICloudCalendarClient:
                 href = _text(response, "href")
                 if display == self.calendar_name and href:
                     self.calendar_href = _href(home_url, href)
+                    _validate_discovered_url(self.calendar_href)
                     return self.calendar_href
         return None
 
@@ -414,61 +427,124 @@ class ICloudCalendarProvider:
                 href=recorded.get("reference"),
                 side_effect=False,
             )
-        link, body, etag = self._read(action)
-        if not etag:
-            raise CalendarError("calendar event has no ETag; refusing an unguarded write")
-        parsed = Calendar.from_ical(body)
-        event = next((item for item in parsed.walk() if item.name == "VEVENT"), None)
-        if event is None:
-            raise CalendarError("VEVENT missing")
-        if str(event.get("UID", "")).strip() != str(link.get("event_uid", "")):
-            raise CalendarError("calendar event UID does not match the imported link")
-        start_prop = event.get("DTSTART")
-        end_prop = event.get("DTEND")
-        if start_prop is None or end_prop is None:
-            raise CalendarError("event has no writable interval")
-        new_start, new_end = action.postcondition.start_at, action.postcondition.end_at
-        _replace_datetime(event, "DTSTART", new_start)
-        _replace_datetime(event, "DTEND", new_end)
-        updated = parsed.to_ical().decode()
-        new_etag = self.client.put(link["href"], updated, etag)
-        if not new_etag:
-            _, _, new_etag = self.client.get(link["href"])
-        self.ledger[action.idempotency_key] = {
-            "reference": link["href"],
-            "operation": action.operation,
-            "start_at": new_start,
-            "end_at": new_end,
-            "refund": 0,
-        }
-        undo_record = {
-            "href": link["href"],
-            "prior_ics": body,
-            "new_etag": new_etag,
-            "commitment_id": action.commitment_id,
-            "event_uid": link.get("event_uid"),
-        }
-        self._undos[action.idempotency_key] = undo_record
-        self.store.put(
-            "calendar_undo",
-            action.idempotency_key,
-            undo_record,
-        )
-        self.links[action.commitment_id] = {**link, "etag": new_etag}
-        self.store.put("calendar_link", action.commitment_id, self.links[action.commitment_id])
-        return self._result(
-            action,
-            success=True,
-            detail="calendar event updated",
-            href=link["href"],
-            start=new_start,
-            end=new_end,
-            side_effect=True,
-        )
+        put_attempted = False
+        try:
+            link, body, etag = self._read(action)
+            if not etag:
+                return self._result(
+                    action,
+                    success=False,
+                    detail="calendar event has no ETag; refusing an unguarded write",
+                    href=link["href"],
+                )
+            parsed = Calendar.from_ical(body)
+            event = next((item for item in parsed.walk() if item.name == "VEVENT"), None)
+            if event is None:
+                raise CalendarError("VEVENT missing")
+            if str(event.get("UID", "")).strip() != str(link.get("event_uid", "")):
+                raise CalendarError("calendar event UID does not match the imported link")
+            start_prop = event.get("DTSTART")
+            end_prop = event.get("DTEND")
+            if start_prop is None:
+                raise CalendarError("event has no writable interval")
+            new_start, new_end = action.postcondition.start_at, action.postcondition.end_at
+            _replace_datetime(event, "DTSTART", new_start)
+            old_duration = event.decoded("DURATION") if event.get("DURATION") is not None else None
+            if old_duration is not None and end_prop is None:
+                new_duration = new_end - new_start
+                if new_duration != old_duration:
+                    event.pop("DURATION", None)
+                    _replace_datetime(event, "DTEND", new_end)
+            elif end_prop is not None:
+                _replace_datetime(event, "DTEND", new_end)
+            else:
+                _replace_datetime(event, "DTEND", new_end)
+            updated = parsed.to_ical().decode()
+            # Persist the intent through the autocommit provider ledger before PUT.
+            intent = {
+                "reference": link["href"],
+                "operation": action.operation,
+                "start_at": new_start,
+                "end_at": new_end,
+                "refund": 0,
+                "pending": True,
+                "prior_ics": body,
+                "prior_etag": etag,
+                "commitment_id": action.commitment_id,
+            }
+            self.ledger[action.idempotency_key] = intent
+            undo_record = {
+                "href": link["href"],
+                "prior_ics": body,
+                "prior_etag": etag,
+                "new_etag": None,
+                "commitment_id": action.commitment_id,
+                "event_uid": link.get("event_uid"),
+            }
+            self._undos[action.idempotency_key] = undo_record
+            self.store.put("calendar_undo", action.idempotency_key, undo_record)
+            try:
+                put_attempted = True
+                new_etag = self.client.put(link["href"], updated, etag)
+            except CalendarConflict:
+                return self._result(
+                    action,
+                    success=False,
+                    detail="calendar event changed before the conditional write (412)",
+                    href=link["href"],
+                )
+            if not new_etag:
+                _, new_etag = self.client.get(link["href"])
+            self._undos[action.idempotency_key] = {**undo_record, "new_etag": new_etag}
+            self.store.put(
+                "calendar_undo", action.idempotency_key, self._undos[action.idempotency_key]
+            )
+            return self._result(
+                action,
+                success=True,
+                detail="calendar event updated",
+                href=link["href"],
+                start=new_start,
+                end=new_end,
+                side_effect=True,
+            )
+        except UnsupportedTimezone:
+            return self._result(action, success=False, detail="unsupported_timezone")
+        except CalendarError as exc:
+            return self._result(action, success=False, detail=str(exc))
+        except Exception as exc:
+            if put_attempted:
+                raise
+            return self._result(
+                action, success=False, detail=f"Calendar write refused: {type(exc).__name__}"
+            )
 
     def verify(self, action: ToolAction) -> ToolResult:
         link, body, etag = self._read(action)
-        return self._observed(action, body, link["href"])
+        result = self._observed(action, body, link["href"])
+        if etag:
+            self.links[action.commitment_id] = {**link, "etag": etag}
+            self.store.put("calendar_link", action.commitment_id, self.links[action.commitment_id])
+            recorded = self.ledger.get(action.idempotency_key)
+            if recorded is not None:
+                finalized = {
+                    **recorded,
+                    "pending": False,
+                    "new_etag": etag,
+                    "verification_failed": not result.success,
+                }
+                replace = getattr(self.ledger, "replace", None)
+                if replace is None:
+                    self.ledger[action.idempotency_key] = finalized
+                else:
+                    replace(action.idempotency_key, finalized)
+            undo = self._undos.get(action.idempotency_key)
+            if undo is not None:
+                self._undos[action.idempotency_key] = {**undo, "new_etag": etag}
+                self.store.put(
+                    "calendar_undo", action.idempotency_key, self._undos[action.idempotency_key]
+                )
+        return result
 
     def undo(self, idempotency_key: str) -> dict:
         loaded = self.store.load()
@@ -476,15 +552,34 @@ class ICloudCalendarProvider:
             loaded.calendar_undos.get(idempotency_key) if loaded else None
         )
         if record is None:
+            ledger_record = self.ledger.get(idempotency_key)
+            if ledger_record is not None and ledger_record.get("prior_ics"):
+                record = {
+                    "href": ledger_record.get("reference"),
+                    "prior_ics": ledger_record["prior_ics"],
+                    "new_etag": ledger_record.get("new_etag"),
+                    "commitment_id": ledger_record.get("commitment_id"),
+                }
+        if record is None:
             raise KeyError(idempotency_key)
-        current, etag = self.client.get(record["href"])
+        _, etag = self.client.get(record["href"])
         expected = record.get("new_etag")
         if not etag:
             raise CalendarError("calendar event has no ETag; refusing an unguarded undo")
         if expected and etag and expected != etag:
             raise CalendarConflict("calendar event changed after execution")
         new_etag = self.client.put(record["href"], record["prior_ics"], etag)
-        return {"status": "UNDONE", "href": record["href"], "etag": new_etag}
+        parsed = Calendar.from_ical(record["prior_ics"])
+        event = next((item for item in parsed.walk() if item.name == "VEVENT"), None)
+        interval = _event_interval(event) if event is not None else None
+        return {
+            "status": "UNDONE",
+            "href": record["href"],
+            "etag": new_etag,
+            "commitment_id": record.get("commitment_id"),
+            "start_at": interval[0] if interval and isinstance(interval[0], datetime) else None,
+            "end_at": interval[1] if interval and isinstance(interval[1], datetime) else None,
+        }
 
 
 class CalendarWatcher:
@@ -516,6 +611,7 @@ class CalendarWatcher:
         if self.seconds_until_next_poll() > 0:
             return self.status()
         try:
+            sync_started_version = self.service.world.version
             snapshot = self.client.list_events()
             self.calendar_found = snapshot.found
             self.last_sync_at = datetime.now(UTC).isoformat()
@@ -528,7 +624,11 @@ class CalendarWatcher:
                 snapshot.events,
                 skipped_all_day=snapshot.skipped_all_day,
                 skipped_recurring=snapshot.skipped_recurring,
+                sync_started_version=sync_started_version,
             )
+            if merged.get("stale"):
+                self._next_poll = time.monotonic() + self._interval
+                return self.status()
             self.imported = merged["imported"]
             self.skipped_all_day = merged["skipped_all_day"]
             self.skipped_recurring = merged["skipped_recurring"]

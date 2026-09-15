@@ -162,10 +162,21 @@ class CascadeService:
         *,
         skipped_all_day: int = 0,
         skipped_recurring: int = 0,
+        sync_started_version: int | None = None,
     ) -> dict:
         """Merge imported calendar commitments and retain incident-linked deletions."""
         incoming = {item.commitment.id: item for item in events}
         with self.lock, self.store.transaction():
+            if sync_started_version is not None and self.world.version != sync_started_version:
+                return {
+                    "imported": 0,
+                    "skipped_all_day": skipped_all_day,
+                    "skipped_recurring": skipped_recurring,
+                    "stale_retained": 0,
+                    "changed": False,
+                    "stale": True,
+                    "version": self.world.version,
+                }
             old_ids = set(self.calendar_links)
             stale_retained = 0
             retained_ids: set[str] = set()
@@ -218,6 +229,8 @@ class CascadeService:
                             source="derived",
                         )
                     )
+            merged.sort(key=lambda item: item.id)
+            intents.sort(key=lambda item: item.id)
             ids = {c.id for c in merged}
             world = self.world.model_copy(
                 update={
@@ -244,6 +257,7 @@ class CascadeService:
                 "skipped_recurring": skipped_recurring,
                 "stale_retained": stale_retained,
                 "changed": changed,
+                "stale": False,
                 "version": self.world.version,
             }
 
@@ -488,6 +502,44 @@ class CascadeService:
             if result.side_effects:
                 self.stream.publish("state.changed", self.world.version, reason="execution")
             return result
+
+    def record_calendar_undo(self, execution_id: str, step_id: str, outcome: dict) -> None:
+        """Apply the prior calendar interval to the authoritative world after an undo."""
+        with self.lock, self.store.transaction():
+            execution = self.executions.get(execution_id)
+            if execution is None:
+                raise KeyError(execution_id)
+            step = next((item for item in execution.steps if item.id == step_id), None)
+            if step is None or step.call is None or step.call.action.provider != "icloud":
+                raise KeyError(step_id)
+            commitment_id = outcome.get("commitment_id") or step.commitment_id
+            start_at, end_at = outcome.get("start_at"), outcome.get("end_at")
+            if start_at is not None and end_at is not None:
+                commitments = tuple(
+                    item.model_copy(update={"start_at": start_at, "end_at": end_at})
+                    if item.id == commitment_id
+                    else item
+                    for item in self.world.commitments
+                )
+                if commitments != self.world.commitments:
+                    self.world = self.world.model_copy(
+                        update={"commitments": commitments, "version": self.world.version + 1}
+                    )
+                    self._save_world()
+                    self._reconcile(evaluate(self.world))
+            link = self.calendar_links.get(commitment_id)
+            if link is not None and outcome.get("etag"):
+                self.calendar_links[commitment_id] = {**link, "etag": outcome["etag"]}
+                self.store.put("calendar_link", commitment_id, self.calendar_links[commitment_id])
+            self._record_audit(
+                {"type": "calendar.undone", "execution_id": execution_id, "step_id": step_id}
+            )
+            self.stream.publish(
+                "state.changed",
+                self.world.version,
+                reason="calendar_undo",
+                execution_id=execution_id,
+            )
 
     def skill_for(self, incident: Incident, name: str | None) -> Skill | None:
         """An explicit name wins; otherwise the most specific matching trigger does."""

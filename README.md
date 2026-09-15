@@ -99,10 +99,14 @@ every subsequent search. `GET /v1/memory/resolutions` shows what was actually ch
 a person promotes one with `PATCH`.
 
 Set `CASCADE_DB` to persist the gateway's world, events, incidents, preferences, resolution
-memory, and audit log across restarts. Set `CASCADE_SIMULATION_DB` to persist the React
-workspace's preferences and resolution memory; its demo itinerary, world, incidents, plans,
-approvals, executions, and provider ledger remain resettable and in memory. The Oracle unit
-stores these databases at `/var/lib/cascade/gateway.db` and `/var/lib/cascade/simulation.db`.
+memory, audit log, searches, approvals, and execution history across restarts. Set
+`CASCADE_LEDGER_DB` to persist the gateway provider ledger in a separate SQLite file;
+`GET /v1/ledger/orphans` reports durable writes that have no matching execution record.
+Set `CASCADE_SIMULATION_DB` to persist the React workspace's preferences and resolution
+memory; its demo itinerary, world, incidents, plans, approvals, executions, and provider
+ledger remain resettable and in memory. The Oracle unit stores these databases at
+`/var/lib/cascade/gateway.db`, `/var/lib/cascade/ledger.db`, and
+`/var/lib/cascade/simulation.db`.
 
 `GET /v1/skills` lists the versioned recovery templates. Planning matches one from the
 incident automatically; `{"skill": "..."}` on the plan request chooses one explicitly, and
@@ -228,8 +232,8 @@ it from the repository root with `deploy/oracle/deploy-web.sh`.
 ## Known limitations
 
 Resource conflicts and authentication are not implemented yet. Plans, searches, approvals,
-executions, and fixture provider ledgers remain process-local even when SQLite persistence
-is enabled; no real booking, refund or message is ever sent. The sandbox is enforced in-process,
+executions, and fixture provider ledgers remain process-local in the React simulation; no real
+booking, refund or message is ever sent. The gateway sandbox is enforced in-process,
 so it constrains Cascade's executor rather than the operating system. In the React
 workspace, security denials are read from the gateway's sandbox, and simulation
 executions don't pass through that sandbox, so the security callout stays empty there.

@@ -9,6 +9,7 @@ from cascade.memory.preferences import preference
 from cascade.memory.resolutions import record_dismissal
 from cascade.persistence import MemoryStore, SqliteStore
 from cascade.service import CascadeService, ConflictError
+from cascade.tools.demo import demo_gateway
 
 
 def test_memory_store_is_empty_and_sqlite_round_trips_every_record_kind_and_stream(tmp_path):
@@ -142,3 +143,147 @@ def test_newer_schema_is_refused(tmp_path):
 
     with pytest.raises(ValueError, match="newer"):
         SqliteStore(path)
+
+
+def _durable_service(db_path, ledger_path):
+    return CascadeService(
+        demo_world(),
+        gateway=demo_gateway(ledger_path=ledger_path),
+        store=SqliteStore(db_path),
+    )
+
+
+def _planned_durable_service(db_path, ledger_path):
+    service = _durable_service(db_path, ledger_path)
+    incident = service.ingest(delay_event()).incident
+    planning = service.plan(incident.id, service.world.version)
+    return service, incident, planning.candidates[0]
+
+
+def test_pending_approval_survives_restart_and_can_be_completed(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    service_a, incident, plan = _planned_durable_service(db_path, ledger_path)
+
+    pending = service_a.execute(plan.id, service_a.world.version, "user")
+    request = pending.approval_request
+    assert request is not None
+
+    service_b = _durable_service(db_path, ledger_path)
+    assert service_b.approvals[request.id].status == "PENDING"
+    assert service_b.plan_incidents[incident.id] == tuple(service_b.plans)
+
+    approved = service_b.approve(
+        request.id,
+        "user",
+        tuple(item.action_id for item in request.items),
+        request.total_amount,
+    )
+    completed = service_b.execute(plan.id, service_b.world.version, "user")
+    assert approved.status == "APPROVED"
+    assert completed.status == "COMPLETED"
+    assert completed.id in service_b.executions
+
+
+def test_approval_restored_after_restart_rejects_stale_world(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    service_a, _, plan = _planned_durable_service(db_path, ledger_path)
+    pending = service_a.execute(plan.id, service_a.world.version, "user")
+    request = pending.approval_request
+    assert request is not None
+
+    service_b = _durable_service(db_path, ledger_path)
+    service_b.ingest(
+        delay_event(version=1, arrival="20:00").model_copy(update={"event_id": "new-delay"})
+    )
+    with pytest.raises(ConflictError, match="world changed"):
+        service_b.approve(
+            request.id,
+            "user",
+            tuple(item.action_id for item in request.items),
+            request.total_amount,
+        )
+
+
+def test_execution_history_and_provider_ledger_survive_restart(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    service_a, _, plan = _planned_durable_service(db_path, ledger_path)
+    pending = service_a.execute(plan.id, service_a.world.version, "user")
+    request = pending.approval_request
+    assert request is not None
+    service_a.approve(
+        request.id,
+        "user",
+        tuple(item.action_id for item in request.items),
+        request.total_amount,
+    )
+    completed = service_a.execute(plan.id, service_a.world.version, "user")
+    assert completed.status == "COMPLETED"
+
+    service_b = _durable_service(db_path, ledger_path)
+    assert service_b.executions[completed.id] == completed
+    step = next(step for step in completed.steps if step.call is not None)
+    action = step.call.action
+    provider = service_b.gateway.providers[action.provider]
+    before = len(provider.ledger)
+    replay = provider.apply(action)
+    assert replay.success is True
+    assert replay.side_effect is False
+    assert len(provider.ledger) == before
+
+
+def test_search_result_is_stored_once_per_planning_call(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    service = _durable_service(db_path, ledger_path)
+    incident = service.ingest(delay_event()).incident
+    service.plan(incident.id, service.world.version)
+    service.plan(incident.id, service.world.version)
+
+    connection = sqlite3.connect(db_path)
+    try:
+        count = connection.execute("SELECT COUNT(*) FROM records WHERE kind = 'search'").fetchone()[
+            0
+        ]
+    finally:
+        connection.close()
+    assert count == 2
+
+
+def test_provider_write_gap_is_rolled_back_and_reported_once_as_orphan(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    service, _, plan = _planned_durable_service(db_path, ledger_path)
+
+    # Let the fixture providers write, then fail at the first durable execution record.
+    service.gateway.authorize = lambda action, context: None
+    original_put = service.store.put
+
+    def fail_execution_record(kind, key, record):
+        if kind == "execution":
+            raise RuntimeError("execution record unavailable")
+        return original_put(kind, key, record)
+
+    service.store.put = fail_execution_record
+    with pytest.raises(RuntimeError, match="execution record"):
+        service.execute(plan.id, service.world.version, "user")
+
+    assert service.world.version == 1
+    assert service.executions == {}
+    assert len(list(service.gateway.providers["mock_transfer"].ledger.items())) == 1
+    assert SqliteStore(db_path).load().executions == {}
+
+    restarted = _durable_service(db_path, ledger_path)
+    orphans = restarted.ledger_orphan_entries()
+    assert len(orphans) == 4
+    assert all(item["type"] == "ledger.orphan_detected" for item in orphans)
+    orphan_audit_count = sum(item["type"] == "ledger.orphan_detected" for item in restarted.audit)
+
+    restarted_again = _durable_service(db_path, ledger_path)
+    assert len(restarted_again.ledger_orphan_entries()) == len(orphans)
+    assert (
+        sum(item["type"] == "ledger.orphan_detected" for item in restarted_again.audit)
+        == orphan_audit_count
+    )

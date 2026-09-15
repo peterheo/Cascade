@@ -42,7 +42,7 @@ import {
   api,
   createPreference,
   deletePreference,
-  isLocal,
+  isLive,
   listPreferences,
   securitySandbox,
   subscribeToWorkspaceEvents,
@@ -179,8 +179,8 @@ export default function Home() {
     [preferenceBusy, setPreferenceBusy] = useState('');
   const local = useSyncExternalStore(
     () => () => {},
-    isLocal,
-    () => false,
+    isLive,
+    isLive,
   );
   const cancelRef = useRef(false);
   const state = workspace.state,

@@ -12,6 +12,7 @@ from cascade.connectors.mail import ImapMailSource, MailCursor, MailFetchError, 
 from cascade.connectors.mail_watcher import MailWatcher
 from cascade.persistence import MemoryStore, SqliteStore
 from cascade.reasoning.models import PrivacySettings
+from cascade.reasoning.nebius import ReasoningError
 
 
 class FakeSource:
@@ -305,3 +306,52 @@ def test_mail_records_include_message_fields_when_enabled(tmp_path):
     assert record["subject"] == "Flight update"
     assert record["sender"] == "airline@example.test"
     assert record["text"] == "The flight arrives later."
+
+
+def test_permanent_poison_message_is_skipped_after_three_attempts():
+    source = FakeSource(
+        MailCursor(9, 2),
+        [
+            replace(message(1, "<poison@example.test>"), text="poison"),
+            replace(message(2, "<next@example.test>"), text="next"),
+        ],
+    )
+    semantic = FakeSemantic()
+
+    async def always_fail(request):
+        if "poison" in request.text:
+            raise ValueError("malformed extraction")
+        return await FakeSemantic.extract(semantic, request)
+
+    semantic.extract = always_fail
+    watcher = MailWatcher(source, semantic, MemoryStore(), folder="Cascade", poll_seconds=60)
+    results = []
+    for _ in range(3):
+        watcher._next_poll = 0
+        results.append(asyncio.run(watcher.poll_once()))
+    assert results[0].error_class == "ValueError"
+    assert results[1].error_class == "ValueError"
+    assert results[2].error_class is None
+    assert results[2].processed == 2
+    assert watcher._cursor == MailCursor(9, 2)
+    assert [body["status"] for body in watcher._messages.values()] == [
+        "FAILED",
+        "NEEDS_CONFIRMATION",
+    ]
+
+
+def test_transient_reasoning_failure_never_advances_cursor():
+    source = FakeSource(MailCursor(9, 1), [message(1, "<transient@example.test>")])
+    semantic = FakeSemantic()
+
+    async def transient(_request):
+        raise ReasoningError("timeout", "temporary")
+
+    semantic.extract = transient
+    watcher = MailWatcher(source, semantic, MemoryStore(), folder="Cascade", poll_seconds=60)
+    for _ in range(3):
+        watcher._next_poll = 0
+        result = asyncio.run(watcher.poll_once())
+        assert result.error_class == "ReasoningError"
+    assert watcher._cursor is None
+    assert watcher._messages == {}

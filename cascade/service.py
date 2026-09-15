@@ -2,12 +2,14 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from threading import RLock
 
+from cascade.connectors.calendar import CalendarEvent
 from cascade.constraints.engine import evaluate
 from cascade.domain.models import (
     Assessment,
     Commitment,
     EventResult,
     Incident,
+    Intent,
     Mutation,
     World,
 )
@@ -64,7 +66,9 @@ class CascadeService:
         )
         self.planner = planner or demo_planner()
         self.gateway = gateway or demo_gateway()
-        self.executor = PlanExecutor(self.gateway)
+        self.calendar_links: dict[str, dict] = dict(persisted.calendar_links) if persisted else {}
+        self.calendar_undos: dict[str, dict] = dict(persisted.calendar_undos) if persisted else {}
+        self.executor = PlanExecutor(self.gateway, calendar_links=self.calendar_links)
         self.permissions = permissions or PermissionPolicy()
         self.skills = load_skills()
         self.preferences: dict[str, Preference] = persisted.preferences if persisted else {}
@@ -148,6 +152,93 @@ class CascadeService:
     def ledger_orphan_entries(self) -> tuple[dict, ...]:
         with self.lock:
             return tuple(self.ledger_orphans.values())
+
+    def sync_calendar(
+        self,
+        events: tuple[CalendarEvent, ...],
+        *,
+        skipped_all_day: int = 0,
+        skipped_recurring: int = 0,
+    ) -> dict:
+        """Merge imported calendar commitments and retain incident-linked deletions."""
+        incoming = {item.commitment.id: item for item in events}
+        with self.lock, self.store.transaction():
+            old_ids = set(self.calendar_links)
+            stale_retained = 0
+            retained_ids: set[str] = set()
+            open_refs = {
+                commitment_id
+                for incident in self.incidents
+                if incident.status == "OPEN"
+                for commitment_id in (
+                    incident.affected_commitment_ids + (incident.trigger_commitment_id,)
+                )
+            }
+            for commitment_id in old_ids - set(incoming):
+                if commitment_id in open_refs:
+                    retained_ids.add(commitment_id)
+                    stale_retained += 1
+                else:
+                    self.calendar_links.pop(commitment_id, None)
+                    self.store.delete("calendar_link", commitment_id)
+
+            imported_old = {c.id: c for c in self.world.commitments if c.id in old_ids}
+            ordinary = [c for c in self.world.commitments if c.id not in old_ids]
+            merged = [*ordinary]
+            intents = [
+                i for i in self.world.intents if i.id not in {f"intent_{cid}" for cid in old_ids}
+            ]
+            for commitment_id, item in incoming.items():
+                merged.append(item.commitment)
+                intents.append(
+                    Intent(
+                        id=item.commitment.intent_id,
+                        description=item.commitment.title,
+                        importance=0.5,
+                        source="derived",
+                    )
+                )
+                self.calendar_links[commitment_id] = item.link
+                self.store.put("calendar_link", commitment_id, item.link)
+            for commitment_id in retained_ids:
+                if commitment_id in imported_old:
+                    merged.append(imported_old[commitment_id])
+                    intents.append(
+                        Intent(
+                            id=imported_old[commitment_id].intent_id,
+                            description=imported_old[commitment_id].title,
+                            importance=0.5,
+                            source="derived",
+                        )
+                    )
+            ids = {c.id for c in merged}
+            world = self.world.model_copy(
+                update={
+                    "commitments": tuple(merged),
+                    "intents": tuple(intents),
+                    "dependencies": tuple(
+                        d for d in self.world.dependencies if d.from_id in ids and d.to_id in ids
+                    ),
+                    "deadlines": tuple(d for d in self.world.deadlines if d.commitment_id in ids),
+                }
+            )
+            changed = world.model_dump(exclude={"version"}) != self.world.model_dump(
+                exclude={"version"}
+            )
+            if changed:
+                self.world = world.model_copy(update={"version": self.world.version + 1})
+                self._save_world()
+                self._reconcile(evaluate(self.world))
+                self.stream.publish("state.changed", self.world.version, reason="calendar_sync")
+            self.executor.calendar_links = self.calendar_links
+            return {
+                "imported": len(incoming),
+                "skipped_all_day": skipped_all_day,
+                "skipped_recurring": skipped_recurring,
+                "stale_retained": stale_retained,
+                "changed": changed,
+                "version": self.world.version,
+            }
 
     def incident(self, incident_id: str) -> Incident:
         with self.lock:

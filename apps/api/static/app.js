@@ -489,6 +489,17 @@ function renderExecution() {
       left,
       text("span", "tier", reference ? `verified ${reference}` : "no external effect"),
     );
+    if (step.status === "EXECUTED" && step.call?.action?.provider === "icloud") {
+      const undo = text("button", "button ghost", "Undo");
+      undo.addEventListener("click", () =>
+        guard(undo, async () => {
+          await call(`/v1/calendar/undo/${execution.id}`, { method: "POST" });
+          toast("Calendar change undone.");
+          await refresh();
+        }),
+      );
+      row.append(undo);
+    }
     rows.append(row);
   }
   body.append(rows);

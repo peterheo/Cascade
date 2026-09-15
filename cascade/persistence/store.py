@@ -238,7 +238,7 @@ class SqliteStore:
 
             state = PersistedState(world=world)
             for row in self._connection.execute(
-                "SELECT kind, key, body FROM records ORDER BY updated_at, key"
+                "SELECT kind, key, body FROM records ORDER BY rowid"
             ):
                 body = json.loads(row["body"])
                 kind = row["kind"]

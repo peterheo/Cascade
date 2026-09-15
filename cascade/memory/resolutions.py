@@ -84,7 +84,7 @@ def record_simulation_execution(
         id=f"res_{uuid4().hex}",
         incident_id=incident_id,
         outcome="EXECUTED",
-        trigger_commitment_id=chosen.actions[0].commitment_id if chosen and chosen.actions else "",
+        trigger_commitment_id="",
         affected_commitment_ids=(
             tuple(action.commitment_id for action in chosen.actions) if chosen else ()
         ),

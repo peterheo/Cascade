@@ -67,6 +67,33 @@ def test_persisted_memory_still_constrains_recovery_after_restart(tmp_path):
     assert planning.candidates == ()
 
 
+def test_incident_record_order_survives_updates_and_restart(tmp_path):
+    path = tmp_path / "order.db"
+    service_a = CascadeService(demo_world(), store=SqliteStore(path))
+    first = service_a.ingest(delay_event()).incident
+    second_event = delay_event(version=1, arrival="20:00").model_copy(
+        update={"event_id": "second-delay"}
+    )
+    second = service_a.ingest(second_event).incident
+    service_a.plan(first.id, 2)
+
+    service_b = CascadeService(demo_world(), store=SqliteStore(path))
+    assert [incident.id for incident in service_b.incidents] == [first.id, second.id]
+
+
+def test_preference_record_order_survives_status_update_and_restart(tmp_path):
+    path = tmp_path / "preference-order.db"
+    service_a = CascadeService(demo_world(), store=SqliteStore(path))
+    first = preference("Protect the hotel.", "require_intent", "intent_hotel")
+    second = preference("Protect the dinner.", "require_intent", "intent_restaurant")
+    service_a.add_preference(first)
+    service_a.add_preference(second)
+    service_a.set_preference_status(first.id, "RETIRED", "user")
+
+    service_b = CascadeService(demo_world(), store=SqliteStore(path))
+    assert list(service_b.preferences) == [first.id, second.id]
+
+
 def test_idempotency_and_conflicts_survive_restart(tmp_path):
     path = tmp_path / "gateway.db"
     service_a = CascadeService(demo_world(), store=SqliteStore(path))

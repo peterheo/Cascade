@@ -24,8 +24,7 @@ async function call(path, options) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith(["/", "v1/", "auth", "/"].join("")))
-      showLogin();
+    if (response.status === 401 && !path.startsWith("/v1/auth/")) showLogin();
     throw new Error(body.detail || `${options?.method || "GET"} ${path} failed`);
   }
   return body;
@@ -768,9 +767,6 @@ async function confirmExtraction(button) {
 
 function listen() {
   // Notifications say what changed; state still comes from the versioned endpoints.
-  // The legacy form is kept in this comment for the static contract; the
-  // explicit option makes session cookies work when the shell is embedded.
-  // new EventSource("/v1/stream")
   const source = new EventSource("/v1/stream", { withCredentials: true });
   let pending = null;
   source.onmessage = null;

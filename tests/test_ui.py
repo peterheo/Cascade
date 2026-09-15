@@ -48,6 +48,8 @@ def test_every_endpoint_the_ui_calls_exists(client):
         re.sub(r"\$\{[^}]+\}", "id", path)
         for path in re.findall(r"[\"'`](/v1/[^\"'`\s]*)[\"'`]", SCRIPT)
     }
+    used.discard("/v1/auth/")
+    assert {"/v1/auth/login", "/v1/auth/logout", "/v1/auth/me"} <= used
     assert len(used) >= 8
     routes = [route.path for route in client.app.routes if hasattr(route, "path")]
     missing = [path for path in used if not any(matches(r, path) for r in routes)]
@@ -91,7 +93,7 @@ def test_the_ui_can_choose_a_recovery_template():
 
 
 def test_the_ui_follows_the_event_stream_without_trusting_it():
-    assert 'new EventSource("/v1/stream")' in SCRIPT
+    assert 'new EventSource("/v1/stream", { withCredentials: true })' in SCRIPT
     # Notifications only trigger a read; the page never renders from the event body.
     assert "refresh()" in SCRIPT
     assert "event.data" not in SCRIPT

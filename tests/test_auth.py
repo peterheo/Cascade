@@ -1,9 +1,12 @@
+import threading
 import time
 
 import pytest
+from fastapi import Response
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
+from cascade.security import auth as auth_module
 from cascade.security.auth import hash_password
 
 
@@ -82,3 +85,47 @@ def test_owner_has_full_access_and_auth_disabled_mode_is_unchanged(monkeypatch):
     with TestClient(create_app()) as test_client:
         assert test_client.get("/v1/state").status_code == 200
         assert test_client.post("/v1/demo/scenarios/flight_delay/inject").status_code == 200
+
+
+def test_anonymous_streams_require_a_session(monkeypatch):
+    configure_auth(monkeypatch)
+    with TestClient(create_app(), base_url="https://testserver") as test_client:
+        assert test_client.get("/v1/stream").status_code == 401
+        assert test_client.get("/simulation/v1/stream").status_code == 401
+
+
+def test_login_limits_concurrent_scrypt_verification(monkeypatch):
+    configure_auth(monkeypatch)
+    manager = create_app().state.auth
+    encoded = hash_password("concurrent-password")
+    expected = auth_module._b64decode(encoded.split("$")[-1])
+    manager.owner_hash = encoded
+    active = 0
+    maximum = 0
+    lock = threading.Lock()
+    start = threading.Event()
+
+    def slow_scrypt(*args, **kwargs):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return expected
+
+    monkeypatch.setattr(auth_module.hashlib, "scrypt", slow_scrypt)
+
+    def attempt(index):
+        request = type("Request", (), {"client": type("Client", (), {"host": str(index)})()})()
+        start.wait(timeout=5)
+        manager.login(request, Response(), "concurrent-password")
+
+    threads = [threading.Thread(target=attempt, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    start.set()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert maximum <= 2

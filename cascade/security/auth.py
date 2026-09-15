@@ -9,6 +9,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Final
@@ -22,6 +23,7 @@ COOKIE_NAME: Final = "cascade_session"
 SESSION_SECONDS: Final = 12 * 60 * 60
 FAILURE_WINDOW_SECONDS: Final = 60
 FAILURE_LIMIT: Final = 5
+SCRYPT_SEMAPHORE: Final = threading.BoundedSemaphore(2)
 
 
 def _b64encode(value: bytes) -> str:
@@ -93,10 +95,11 @@ class AuthManager:
 
     def _record_failure(self, request: Request) -> bool:
         now = time.monotonic()
+        for stale_key, (started, _) in tuple(self._failures.items()):
+            if now - started >= FAILURE_WINDOW_SECONDS:
+                self._failures.pop(stale_key, None)
         key = self._client_key(request)
         started, count = self._failures.get(key, (now, 0))
-        if now - started >= FAILURE_WINDOW_SECONDS:
-            started, count = now, 0
         count += 1
         self._failures[key] = (started, count)
         return count > FAILURE_LIMIT
@@ -175,11 +178,10 @@ class AuthManager:
     def login(self, request: Request, response: Response, password: str) -> str:
         if self._record_failure(request):
             raise HTTPException(429, "Too many login attempts", headers={"Retry-After": "60"})
-        role = None
-        if verify_password(password, self.owner_hash):
-            role = "owner"
-        elif verify_password(password, self.demo_hash):
-            role = "demo"
+        with SCRYPT_SEMAPHORE:
+            owner_valid = verify_password(password, self.owner_hash)
+            demo_valid = verify_password(password, self.demo_hash)
+        role = "owner" if owner_valid else "demo" if demo_valid else None
         if role is None:
             raise HTTPException(401, "Invalid password")
         self._clear_failures(request)

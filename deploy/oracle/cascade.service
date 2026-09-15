@@ -18,7 +18,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/cascade
+StateDirectory=cascade
+StateDirectoryMode=0700
+Environment=CASCADE_DB=/var/lib/cascade/gateway.db
+Environment=CASCADE_SIMULATION_DB=/var/lib/cascade/simulation.db
+ReadWritePaths=/opt/cascade /var/lib/cascade
 
 [Install]
 WantedBy=multi-user.target

@@ -9,7 +9,8 @@ This repository implements **Phase 1 — deterministic core**, **Phase 2 — rec
 **Phase 3 — Nemotron integration**, **Phase 4 — product surface**, **Phase 5 — approval,
 execution and verification**, and **Phase 6 — evaluation** of the supplied
 [architecture specification](docs/architecture.md). It is a local, single-user demo,
-with synthetic data and in-memory state that resets on restart.
+with synthetic data. The gateway can persist its state to SQLite when `CASCADE_DB` is
+set; without it, the default is in-memory state.
 
 Phase 3 live extraction, strategy generation, and comparison have been verified
 against Nebius Nemotron. See the [Nebius setup guide](docs/nebius.md) for configuration
@@ -64,12 +65,13 @@ curl -X POST http://127.0.0.1:8000/v1/incidents/inc_demo_flight_delay_v0/plan \
   -H 'Content-Type: application/json' -d '{"expected_version": 1}'
 ```
 
-Repeated demo injection is idempotent. Restart the server to reset. `POST /v1/events`
+Repeated demo injection is idempotent. With the default in-memory store, restart the server
+to reset. `POST /v1/events`
 accepts typed mutations with an event ID, expected world version, timezone-aware
 start/end timestamps, and source provenance. Conflicting IDs, stale versions, and
 low-confidence inputs return 409; invalid data returns 422. The confidence threshold
 is a demo admission rule, not authentication or authorization. Bind locally and use
-one worker: storage and deduplication are process-local.
+one worker for the single-process demo.
 
 Executing a plan is a separate, two-step decision:
 
@@ -95,6 +97,12 @@ reader fetches it back through the versioned endpoints.
 every subsequent search. `GET /v1/memory/resolutions` shows what was actually chosen, and
 `GET /v1/memory/suggestions` shows what repeated choices imply — suggestions only, until
 a person promotes one with `PATCH`.
+
+Set `CASCADE_DB` to persist the gateway's world, events, incidents, preferences, resolution
+memory, and audit log across restarts. Set `CASCADE_SIMULATION_DB` to persist the React
+workspace's preferences and resolution memory; its demo itinerary, world, incidents, plans,
+approvals, executions, and provider ledger remain resettable and in memory. The Oracle unit
+stores these databases at `/var/lib/cascade/gateway.db` and `/var/lib/cascade/simulation.db`.
 
 `GET /v1/skills` lists the versioned recovery templates. Planning matches one from the
 incident automatically; `{"skill": "..."}` on the plan request chooses one explicitly, and
@@ -201,11 +209,11 @@ UI tests assert that every endpoint the page calls exists on the API.
 
 ## Next milestones
 
-1. PostgreSQL persistence and durable audit storage.
-2. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
+1. Real connectors and an out-of-process OpenShell runner behind the same sandbox seam.
 
 Package layout follows the design's domain/graph/constraints split. `cascade/service.py`
-is the temporary in-memory orchestration boundary; `apps/api` is the HTTP adapter.
+is the orchestration boundary and `cascade/persistence/store.py` supplies the optional
+durable store; `apps/api` is the HTTP adapter.
 
 ## Deploy
 
@@ -219,9 +227,9 @@ it from the repository root with `deploy/oracle/deploy-web.sh`.
 
 ## Known limitations
 
-Resource conflicts, authentication, and persistent storage are not implemented yet.
-Execution mutates fixture provider ledgers in this process; no real booking, refund or
-message is ever sent. The sandbox is enforced in-process,
+Resource conflicts and authentication are not implemented yet. Plans, searches, approvals,
+executions, and fixture provider ledgers remain process-local even when SQLite persistence
+is enabled; no real booking, refund or message is ever sent. The sandbox is enforced in-process,
 so it constrains Cascade's executor rather than the operating system. In the React
 workspace, security denials are read from the gateway's sandbox, and simulation
 executions don't pass through that sandbox, so the security callout stays empty there.

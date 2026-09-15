@@ -1,6 +1,8 @@
 """Isolated stepwise fixture simulation; never shares state with the gateway API."""
 
 import asyncio
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -12,6 +14,7 @@ from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
 from cascade.execution.service import ExecutionService
 from cascade.observability.events import EventStream
+from cascade.persistence import MemoryStore, SqliteStore
 from cascade.planning.models import SearchPolicy
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
@@ -44,12 +47,23 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     app = FastAPI(
         title="Cascade", version="0.4.0", description="Deterministic recovery with Nemotron"
     )
-    service = CascadeService(demo_world())
+    db_path = os.environ.get("CASCADE_SIMULATION_DB")
+    store = (
+        SqliteStore(
+            path=Path(db_path),
+            kinds=frozenset({"preference"}),
+            streams=frozenset({"resolution"}),
+        )
+        if db_path
+        else MemoryStore()
+    )
+    service = CascadeService(demo_world(), store=store)
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
     register_preference_routes(app, service)
     executor = ExecutionService(service)
     simulation_stream = EventStream()
+    app.state.service = service
     app.state.simulation_stream = simulation_stream
     demo_event_id = None
 
@@ -203,7 +217,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     async def reset():
         nonlocal demo_event_id
         async with semantic.lock:
-            with service.lock:
+            with service.lock, service.store.transaction():
                 if any(e.status == "RUNNING" for e in executor.executions.values()):
                     raise ConflictError("cancel active execution before resetting the demo")
                 service.world = demo_world().model_copy(
@@ -223,7 +237,9 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 executor.executions.clear()
                 executor.bases.clear()
                 demo_event_id = None
-                service.audit.append({"type": "demo.reset", "world_version": service.world.version})
+                service._record_audit(
+                    {"type": "demo.reset", "world_version": service.world.version}
+                )
                 simulation_stream.publish("state.changed", service.world.version, reason="reset")
                 return {"world": service.world, "assessment": evaluate(service.world)}
 
@@ -281,7 +297,11 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "storage": "in_memory", "mode": "demo"}
+        return {
+            "status": "ok",
+            "storage": "sqlite_preferences" if db_path else "in_memory",
+            "mode": "demo",
+        }
 
     @app.get("/v1/state")
     def state():

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from apps.api.preferences import register_preference_routes
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
+from cascade.persistence import MemoryStore, SqliteStore
 from cascade.planning.models import SearchPolicy
 from cascade.reasoning.models import NaturalEventRequest
 from cascade.reasoning.nebius import NebiusReasoner, ReasoningError, ReasoningProvider
@@ -61,7 +63,9 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     app = FastAPI(
         title="Cascade", version="0.4.0", description="Deterministic recovery with Nemotron"
     )
-    service = CascadeService(demo_world())
+    db_path = os.environ.get("CASCADE_DB")
+    store = SqliteStore(Path(db_path)) if db_path else MemoryStore()
+    service = CascadeService(demo_world(), store=store)
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
     # Exposed for tests and for anything that has the app but not the closure.
@@ -132,7 +136,11 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "storage": "in_memory", "mode": "demo"}
+        return {
+            "status": "ok",
+            "storage": "sqlite" if db_path else "in_memory",
+            "mode": "demo",
+        }
 
     @app.get("/v1/state")
     def state():

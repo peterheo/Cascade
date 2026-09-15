@@ -51,8 +51,8 @@ turn it into a typed change you confirm (or use the deterministic simulator when
 is configured), watch the blast radius light up the dependency graph, compare the
 feasible alternatives and their tradeoffs, approve the exact actions and total, then
 watch each action execute and verify. It is plain HTML, CSS and ES modules served by the
-API — no build step, no bundler, no network dependency. (`apps/web` is the untouched
-starter scaffold and is not part of the running system.)
+API — no build step, no bundler, no network dependency. `apps/web` is the React workspace,
+live at https://app.cascade.150.136.6.100.nip.io, and it talks to the simulation API.
 
 Inject the demo from the command line instead:
 
@@ -222,7 +222,10 @@ it from the repository root with `deploy/oracle/deploy-web.sh`.
 Resource conflicts, authentication, and persistent storage are not implemented yet.
 Execution mutates fixture provider ledgers in this process; no real booking, refund or
 message is ever sent. The sandbox is enforced in-process,
-so it constrains Cascade's executor rather than the operating system. Fixture quality
+so it constrains Cascade's executor rather than the operating system. In the React
+workspace, security denials are read from the gateway's sandbox, and simulation
+executions don't pass through that sandbox, so the security callout stays empty there.
+Fixture quality
 values are explicit demo assumptions, not learned preferences. Search completeness
 refers only to the queried inventory and operators.
 
@@ -263,7 +266,7 @@ The dependency graph re-levels only when the set of commitments changes, not whe
 change under the same set.
 
 The hosted replay fixture has no model comparison or sandbox denials, so the Recommended
-badge and the security callout render only against a local backend.
+badge and the security callout render only against a live backend.
 
 ## Stepwise simulation workspace
 
@@ -272,13 +275,16 @@ Run the API as above, then run `npm ci` and `npm run dev -- --host 127.0.0.1` in
 `apps/web` and open http://localhost:3000. It offers plan comparison, exact approval,
 step verification, cancellation, and an audit trail.
 
-Its local requests use `/simulation/v1`, an isolated fixture workspace with its own
+Local dev (`npm run dev`) is live and uses `/simulation/v1`, an isolated fixture workspace with its own
 world, plans, and approvals. Simulation cannot mutate the main `/v1` gateway state
 or satisfy its approval requirements. The main UI at http://127.0.0.1:8000 retains
 the remote branch's tool gateway, permission tiers, skills, memory, and notifications.
 Both interfaces use the shared deterministic planner and Nebius integration.
 
-The hosted React preview uses synthetic replay data and has no live backend.
+The hosted build is replay by default when `NEXT_PUBLIC_CASCADE_MODE` is unset.
+`npm run build:export` sets `NEXT_PUBLIC_CASCADE_MODE=live` for the Oracle deployment,
+so the deployed React workspace uses the live simulation API. The hosted replay build
+uses synthetic data and has no live backend.
 Run `uv run python scripts/export_web_demo.py` to regenerate it after fixture changes.
 Validate the React workspace with `npm run typecheck`, `npm run lint`, `npm test`,
 and `npm run build` from `apps/web`.

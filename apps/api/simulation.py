@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import Field, ValidationError
 
+from apps.api.preferences import register_preference_routes
 from cascade.constraints.engine import evaluate
 from cascade.demo import delay_event, demo_world
 from cascade.domain.models import Mutation, Record
@@ -46,6 +47,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
     service = CascadeService(demo_world())
     reasoner = reasoning_provider or NebiusReasoner()
     semantic = SemanticService(service, reasoner)
+    register_preference_routes(app, service)
     executor = ExecutionService(service)
     simulation_stream = EventStream()
     app.state.simulation_stream = simulation_stream

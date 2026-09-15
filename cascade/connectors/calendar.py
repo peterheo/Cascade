@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import posixpath
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from urllib.parse import unquote, urljoin, urlsplit
@@ -585,9 +586,17 @@ class ICloudCalendarProvider:
 class CalendarWatcher:
     """Periodic synchronizer; all network I/O happens outside Cascade's lock."""
 
-    def __init__(self, client: ICloudCalendarClient, service, *, poll_seconds: int):
+    def __init__(
+        self,
+        client: ICloudCalendarClient,
+        service,
+        *,
+        poll_seconds: int,
+        persist_event_text: Callable[[], bool] | None = None,
+    ):
         self.client = client
         self.service = service
+        self.persist_event_text = persist_event_text or (lambda: False)
         self.poll_seconds = poll_seconds
         self._interval = poll_seconds
         self._next_poll = 0.0
@@ -625,6 +634,7 @@ class CalendarWatcher:
                 skipped_all_day=snapshot.skipped_all_day,
                 skipped_recurring=snapshot.skipped_recurring,
                 sync_started_version=sync_started_version,
+                persist_event_text=self.persist_event_text(),
             )
             if merged.get("stale"):
                 self._next_poll = time.monotonic() + self._interval

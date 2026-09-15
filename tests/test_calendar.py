@@ -103,8 +103,10 @@ def test_calendar_sync_is_idempotent_and_personal_mode_blocks_demo(monkeypatch):
             "event_uid": "one",
             "etag": '"1"',
         },
+        metadata={"STATUS": "CONFIRMED", "LOCATION": "secret", "DESCRIPTION": "private"},
     )
-    assert service.sync_calendar((event,))["changed"] is True
+    assert service.sync_calendar((event,), persist_event_text=False)["changed"] is True
+    assert service.calendar_metadata["ical_one"] == {"STATUS": "CONFIRMED"}
     version = service.world.version
     assert service.sync_calendar((event,))["changed"] is False
     assert service.world.version == version

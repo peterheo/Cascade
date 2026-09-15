@@ -168,7 +168,12 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
             calendar_password,
             calendar_name=os.environ.get("CASCADE_ICLOUD_CALENDAR", "Cascade Trip"),
         )
-        calendar_watcher = CalendarWatcher(calendar_client, service, poll_seconds=calendar_poll)
+        calendar_watcher = CalendarWatcher(
+            calendar_client,
+            service,
+            poll_seconds=calendar_poll,
+            persist_event_text=lambda: semantic.privacy.persist_event_text,
+        )
         ledger_backend = next(
             (
                 getattr(provider, "ledger_backend", None)

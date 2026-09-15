@@ -163,6 +163,7 @@ class CascadeService:
         skipped_all_day: int = 0,
         skipped_recurring: int = 0,
         sync_started_version: int | None = None,
+        persist_event_text: bool = True,
     ) -> dict:
         """Merge imported calendar commitments and retain incident-linked deletions."""
         incoming = {item.commitment.id: item for item in events}
@@ -216,8 +217,13 @@ class CascadeService:
                 )
                 self.calendar_links[commitment_id] = item.link
                 self.store.put("calendar_link", commitment_id, item.link)
-                self.calendar_metadata[commitment_id] = dict(item.metadata)
-                self.store.put("calendar_metadata", commitment_id, item.metadata)
+                metadata = {
+                    key: value
+                    for key, value in item.metadata.items()
+                    if key == "STATUS" or persist_event_text
+                }
+                self.calendar_metadata[commitment_id] = metadata
+                self.store.put("calendar_metadata", commitment_id, metadata)
             for commitment_id in retained_ids:
                 if commitment_id in imported_old:
                     merged.append(imported_old[commitment_id])

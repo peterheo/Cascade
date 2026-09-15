@@ -106,7 +106,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
 
             async def poll_loop():
                 while True:
-                    await asyncio.to_thread(mail_watcher.poll_once)
+                    await mail_watcher.poll_once()
                     await asyncio.sleep(max(1.0, mail_watcher.seconds_until_next_poll()))
 
             task = asyncio.create_task(poll_loop())
@@ -279,6 +279,7 @@ def create_app(reasoning_provider: ReasoningProvider | None = None) -> FastAPI:
                 "last_poll_at": None,
                 "last_error_class": None,
                 "processed_count": 0,
+                "recent": [],
             }
         return mail_watcher.status()
 

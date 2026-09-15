@@ -85,6 +85,12 @@ def test_privacy_endpoint_exists_in_both_apps():
             assert app.get("/v1/privacy").status_code == 200
 
 
+def test_the_static_ui_lists_recent_mail_extractions():
+    markup = (STATIC / "index.html").read_text()
+    assert 'id="mail-feed"' in markup and "Open extraction" in SCRIPT
+    assert "/v1/connectors/mail/status" in SCRIPT
+
+
 def test_the_ui_can_choose_a_recovery_template():
     assert "/v1/skills" in SCRIPT
     # Auto-matching stays the default: a template is only sent when one is chosen.

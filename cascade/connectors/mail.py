@@ -1,4 +1,4 @@
-"""Read-only iCloud IMAP mail access with cursor-based polling."""
+"""Read-only iCloud IMAP access with cursor-based polling."""
 
 from __future__ import annotations
 
@@ -27,6 +27,15 @@ class MailMessage:
     sender: str
     received_at: datetime
     text: str
+
+
+class MailFetchError(RuntimeError):
+    """A body fetch failed after zero or more messages were read successfully."""
+
+    def __init__(self, cursor: MailCursor, messages: list[MailMessage]):
+        super().__init__("mail message fetch failed")
+        self.cursor = cursor
+        self.messages = messages
 
 
 class MailSource(Protocol):
@@ -73,7 +82,9 @@ def _message_text(message: Message) -> str:
             plain.append(_decode_part(part))
         elif content_type == "text/html":
             markup.append(_decode_part(part))
-    text = "\n".join(plain) if plain else re.sub(r"<[^>]+>", " ", "\n".join(markup))
+    markup_text = "\n".join(markup)
+    markup_text = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1>", " ", markup_text)
+    text = "\n".join(plain) if plain else re.sub(r"<[^>]+>", " ", markup_text)
     return html.unescape(text).strip()[:20_000]
 
 
@@ -106,18 +117,19 @@ class ImapMailSource:
             status, data = client.uid("SEARCH", None, f"UID {start}:*")
             if status != "OK":
                 raise RuntimeError("mail UID search failed")
-            uids = _uids(data)[: max(0, limit)]
+            uids = sorted(_uids(data))[: max(0, limit)]
             messages: list[MailMessage] = []
+            last_uid = cursor.last_uid
             for uid in uids:
                 status, fetched = client.uid("FETCH", str(uid), "(BODY.PEEK[])")
                 if status != "OK":
-                    continue
+                    raise MailFetchError(MailCursor(uidvalidity, last_uid), messages)
                 raw = next(
                     (part[1] for part in fetched if isinstance(part, tuple) and len(part) > 1),
                     None,
                 )
                 if not isinstance(raw, bytes):
-                    continue
+                    raise MailFetchError(MailCursor(uidvalidity, last_uid), messages)
                 parsed = email.message_from_bytes(raw)
                 try:
                     received = email.utils.parsedate_to_datetime(parsed.get("Date", ""))
@@ -130,14 +142,15 @@ class ImapMailSource:
                 messages.append(
                     MailMessage(
                         uid=uid,
-                        message_id=parsed.get("Message-ID", f"imap-{uid}").strip(),
+                        message_id=parsed.get("Message-ID", f"imap-{uidvalidity}-{uid}").strip(),
                         subject=parsed.get("Subject", "").strip(),
                         sender=parsed.get("From", "").strip(),
                         received_at=received,
                         text=_message_text(parsed),
                     )
                 )
-            return MailCursor(uidvalidity, max(cursor.last_uid, *(u for u in uids))), messages
+                last_uid = uid
+            return MailCursor(uidvalidity, last_uid), messages
         finally:
             try:
                 client.logout()

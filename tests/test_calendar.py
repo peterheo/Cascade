@@ -1,3 +1,5 @@
+import sqlite3
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -584,6 +586,200 @@ def test_calendar_undo_api_returns_verified_undo(monkeypatch):
     assert response.json() == outcome
 
 
+def test_calendar_undo_api_real_execute_and_provider_uses_if_match(tmp_path, monkeypatch):
+    monkeypatch.setenv("CASCADE_DB", str(tmp_path / "gateway.db"))
+    monkeypatch.setenv("CASCADE_LEDGER_DB", str(tmp_path / "ledger.db"))
+    monkeypatch.setenv("CASCADE_ICLOUD_USER", "u@example.test")
+    monkeypatch.setenv("CASCADE_ICLOUD_APP_PASSWORD", "app-password")
+    app = create_app()
+    watcher = app.state.calendar_watcher
+    mail_watcher = app.state.mail_watcher
+    if watcher is not None:
+        watcher._next_poll = time.monotonic() + 3600
+    if mail_watcher is not None:
+        mail_watcher._next_poll = time.monotonic() + 3600
+    service = app.state.service
+    service.gateway.sandbox = None
+    incident = service.ingest(delay_event()).incident
+    planning = service.plan(incident.id, service.world.version)
+    plan = planning.candidates[0]
+    option = next(item for item in plan.actions if item.resolution != "PRESERVED")
+    current = next(item for item in service.world.commitments if item.id == option.commitment_id)
+    href = "https://caldav.test/home/event.ics"
+    service.calendar_links[current.id] = {
+        "calendar_href": "https://caldav.test/home/",
+        "href": href,
+        "event_uid": "event-1@example.test",
+        "etag": '"1"',
+    }
+    body = (
+        "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\n"
+        "UID:event-1@example.test\nSUMMARY:Calendar item\n"
+        f"DTSTART;TZID=Europe/Paris:{current.start_at.strftime('%Y%m%dT%H%M%S')}\n"
+        f"DTEND;TZID=Europe/Paris:{current.end_at.strftime('%Y%m%dT%H%M%S')}\n"
+        "END:VEVENT\nEND:VCALENDAR\n"
+    )
+    state = {"body": body, "etag": '"1"'}
+    puts = []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(
+                200, text=state["body"], headers={"ETag": state["etag"]}, request=request
+            )
+        assert request.headers["if-match"] == state["etag"]
+        puts.append((request.content.decode(), request.headers["if-match"]))
+        state["body"] = request.content.decode()
+        state["etag"] = f'"{len(puts) + 1}"'
+        return httpx.Response(204, headers={"ETag": state["etag"]}, request=request)
+
+    provider = service.gateway.providers["icloud"]
+    provider.client.calendar_href = "https://caldav.test/home/"
+    provider.client.transport = httpx.MockTransport(handler)
+    with TestClient(app) as client:
+        version = service.world.version
+        pending = client.post(
+            f"/v1/recovery-plans/{plan.id}/execute", json={"expected_version": version}
+        ).json()
+        assert pending["status"] == "AWAITING_APPROVAL"
+        request = pending["approval_request"]
+        approved = client.post(
+            f"/v1/approvals/{request['id']}/approve",
+            json={
+                "approved_action_ids": [item["action_id"] for item in request["items"]],
+                "acknowledged_amount": request["total_amount"],
+            },
+        )
+        assert approved.status_code == 200
+        executed = client.post(
+            f"/v1/recovery-plans/{plan.id}/execute", json={"expected_version": version}
+        ).json()
+        step = next(
+            item
+            for item in executed["steps"]
+            if item["call"] and item["call"]["action"]["provider"] == "icloud"
+        )
+        assert step["status"] == "EXECUTED"
+        undone = client.post(f"/v1/calendar/undo/{executed['id']}/{step['id']}")
+        assert undone.status_code == 200
+    assert len(puts) >= 2
+    assert puts[-1][1] == '"2"'
+
+
+def test_calendar_sync_stales_approval_via_api(monkeypatch):
+    app = create_app()
+    service = app.state.service
+    with TestClient(app) as client:
+        incident = client.post("/v1/demo/scenarios/flight_delay/inject").json()["incident"]
+        planned = client.post(
+            f"/v1/incidents/{incident['id']}/plan", json={"expected_version": 1}
+        ).json()
+        pending = client.post(
+            f"/v1/recovery-plans/{planned['candidates'][0]['id']}/execute",
+            json={"expected_version": 1},
+        ).json()
+        commitment = Commitment(
+            id="ical_api_stale",
+            kind="meeting",
+            title="Imported",
+            intent_id="intent_ical_api_stale",
+            start_at=datetime(2026, 9, 15, 12, tzinfo=UTC),
+            end_at=datetime(2026, 9, 15, 13, tzinfo=UTC),
+            source=SourceRef(source="icloud_calendar", external_id="api-stale"),
+        )
+        service.sync_calendar(
+            (
+                CalendarEvent(
+                    commitment,
+                    {
+                        "calendar_href": "https://caldav.test/home/",
+                        "href": "https://caldav.test/home/api-stale.ics",
+                        "event_uid": "api-stale",
+                        "etag": '"1"',
+                    },
+                ),
+            )
+        )
+        response = client.post(
+            f"/v1/approvals/{pending['approval_request']['id']}/approve",
+            json={
+                "approved_action_ids": [
+                    item["action_id"] for item in pending["approval_request"]["items"]
+                ],
+                "acknowledged_amount": pending["approval_request"]["total_amount"],
+            },
+        )
+    assert response.status_code == 409
+
+
+def test_calendar_link_and_undo_rows_reload_on_service_restart(tmp_path):
+    path = tmp_path / "calendar.db"
+    event = CalendarEvent(
+        Commitment(
+            id="ical_restart",
+            kind="meeting",
+            title="Restart",
+            intent_id="intent_ical_restart",
+            start_at=datetime(2026, 9, 15, 12, tzinfo=UTC),
+            end_at=datetime(2026, 9, 15, 13, tzinfo=UTC),
+            source=SourceRef(source="icloud_calendar", external_id="restart"),
+        ),
+        {
+            "calendar_href": "https://caldav.test/home/",
+            "href": "https://caldav.test/home/restart.ics",
+            "event_uid": "restart",
+            "etag": '"7"',
+        },
+    )
+    service_a = CascadeService(
+        World(commitments=(), intents=(), dependencies=(), deadlines=()),
+        store=SqliteStore(path),
+    )
+    service_a.sync_calendar((event,))
+    undo = {
+        "href": event.link["href"],
+        "prior_ics": ICS,
+        "prior_etag": '"7"',
+        "new_etag": '"8"',
+        "commitment_id": event.commitment.id,
+    }
+    service_a.store.put("calendar_undo", "restart-undo", undo)
+    service_b = CascadeService(
+        World(commitments=(), intents=(), dependencies=(), deadlines=()),
+        store=SqliteStore(path),
+    )
+    assert service_b.calendar_links[event.commitment.id] == event.link
+    assert service_b.calendar_undos["restart-undo"] == undo
+
+
+def test_calendar_orphan_is_reported_by_api_after_restart(tmp_path, monkeypatch):
+    db_path = tmp_path / "gateway.db"
+    ledger_path = tmp_path / "ledger.db"
+    monkeypatch.setenv("CASCADE_DB", str(db_path))
+    monkeypatch.setenv("CASCADE_LEDGER_DB", str(ledger_path))
+    monkeypatch.setenv("CASCADE_GATEWAY_WORLD", "empty")
+    monkeypatch.setenv("CASCADE_ICLOUD_USER", "u@example.test")
+    monkeypatch.setenv("CASCADE_ICLOUD_APP_PASSWORD", "app-password")
+    SqliteLedger(ledger_path).replace(
+        "icloud",
+        "orphan-after-restart",
+        {
+            "reference": "https://caldav.test/home/orphan.ics",
+            "pending": True,
+            "put_started": True,
+            "state": "pending",
+        },
+    )
+    first_app = create_app()
+    if first_app.state.calendar_watcher is not None:
+        first_app.state.calendar_watcher._next_poll = time.monotonic() + 3600
+    if first_app.state.mail_watcher is not None:
+        first_app.state.mail_watcher._next_poll = time.monotonic() + 3600
+    with TestClient(create_app()) as client:
+        orphans = client.get("/v1/ledger/orphans").json()
+    assert any(item["idempotency_key"] == "orphan-after-restart" for item in orphans)
+
+
 def test_calendar_write_after_put_readback_failure_is_reconcilable(tmp_path):
     state = {"body": ICS, "etag": '"1"', "gets": 0}
 
@@ -667,13 +863,26 @@ def test_empty_mode_clears_persisted_demo_records(tmp_path, monkeypatch):
     with TestClient(create_app()) as client:
         assert client.post("/v1/demo/scenarios/flight_delay/inject").status_code == 200
     monkeypatch.setenv("CASCADE_GATEWAY_WORLD", "empty")
-    with TestClient(create_app()) as client:
-        assert client.get("/v1/state").json()["world"]["commitments"] == []
-    loaded = SqliteStore(db_path).load()
-    assert loaded is not None
-    assert loaded.events == {}
-    assert loaded.incidents == []
-    assert loaded.approvals == {}
-    assert loaded.executions == {}
-    with TestClient(create_app()) as client:
-        assert client.get("/v1/state").json()["world"]["commitments"] == []
+    for _ in range(2):
+        with TestClient(create_app()) as client:
+            assert client.get("/v1/state").json()["world"]["commitments"] == []
+        loaded = SqliteStore(db_path).load()
+        assert loaded is not None
+        assert loaded.events == {}
+        assert loaded.incidents == []
+        assert loaded.approvals == {}
+        assert loaded.executions == {}
+        connection = sqlite3.connect(db_path)
+        try:
+            records = connection.execute(
+                "SELECT kind, COUNT(*) FROM records GROUP BY kind"
+            ).fetchall()
+            resolution_rows = connection.execute(
+                "SELECT COUNT(*) FROM log WHERE stream = 'resolution'"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        assert {kind for kind, _ in records}.isdisjoint(
+            {"event", "incident", "plan", "approval", "execution"}
+        )
+        assert resolution_rows == 0

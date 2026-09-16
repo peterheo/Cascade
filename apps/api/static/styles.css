@@ -145,6 +145,71 @@ main {
   font-size: 13px;
 }
 
+.connector-panel {
+  padding-bottom: 16px;
+}
+
+.connector-status {
+  display: grid;
+  gap: 10px;
+}
+
+.connector-line {
+  display: grid;
+  grid-template-columns: 10px minmax(120px, 0.35fr) 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+
+.connector-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.connector-line.ok .connector-dot { background: var(--ok); }
+.connector-line.warn .connector-dot { background: var(--warn); }
+.connector-line.bad .connector-dot { background: var(--bad); }
+
+.connector-heading {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.connector-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.connector-copy {
+  display: grid;
+  gap: 2px;
+  color: var(--ink);
+}
+
+.connector-copy small {
+  color: var(--muted);
+}
+
+.empty-state {
+  color: var(--muted);
+  padding: 12px 0;
+}
+
+.graph-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+
 .pill {
   border: 1px solid var(--line);
   border-radius: 999px;

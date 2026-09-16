@@ -91,6 +91,29 @@ def test_the_static_ui_lists_recent_mail_extractions():
     assert "/v1/connectors/mail/status" in SCRIPT
 
 
+def test_empty_owner_surface_has_connector_health_and_neutral_placeholders():
+    markup = (STATIC / "index.html").read_text()
+    assert 'id="connector-status"' in markup
+    assert "No commitments yet." in SCRIPT
+    for placeholder in (
+        "No incidents yet.",
+        "No plans yet.",
+        "No pending approvals.",
+        "No executions yet.",
+        "No extraction yet.",
+        "No mail messages yet.",
+    ):
+        assert placeholder in SCRIPT
+
+
+def test_connector_status_is_refreshed_for_mail_and_calendar():
+    assert 'call("/v1/connectors/mail/status")' in SCRIPT
+    assert 'call("/v1/connectors/calendar/status")' in SCRIPT
+    assert "CASCADE_ICLOUD_USER" in SCRIPT
+    assert "CASCADE_ICLOUD_APP_PASSWORD" in SCRIPT
+    assert "configured calendar was not found; nothing will be written" in SCRIPT
+
+
 def test_the_ui_can_choose_a_recovery_template():
     assert "/v1/skills" in SCRIPT
     # Auto-matching stays the default: a template is only sent when one is chosen.

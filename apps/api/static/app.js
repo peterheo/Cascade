@@ -11,6 +11,7 @@ const state = {
   approval: null,
   execution: null,
   extraction: null,
+  connectors: { mail: null, calendar: null },
   authRole: null,
 };
 
@@ -79,6 +80,70 @@ function time(value) {
   // Show the itinerary's own wall clock. Converting to the viewer's zone would
   // silently rewrite the times the constraint engine actually reasoned about.
   return String(value).slice(11, 16);
+}
+
+function relativeTime(value) {
+  if (!value) return "never";
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function connectorTone(enabled, healthy) {
+  if (!enabled) return ["warn", "needs setup"];
+  return healthy ? ["ok", "healthy"] : ["bad", "attention needed"];
+}
+
+function connectorLine(name, status, details) {
+  const [tone, label] = connectorTone(status?.enabled, details.healthy);
+  const row = text("div", `connector-line ${tone}`);
+  const dot = text("span", "connector-dot");
+  dot.setAttribute("aria-hidden", "true");
+  const heading = text("div", "connector-heading");
+  heading.append(text("strong", null, name), text("span", "connector-label", label));
+  const copy = text("div", "connector-copy");
+  copy.append(text("span", null, details.summary));
+  if (details.meta) copy.append(text("small", null, details.meta));
+  row.append(dot, heading, copy);
+  return row;
+}
+
+function renderConnectors(mail, calendar) {
+  state.connectors = { mail, calendar };
+  const body = el("connector-status");
+  body.replaceChildren();
+  const missing = (names) => `Set ${names.join(" and ")} to enable this connector.`;
+  const mailHealthy = Boolean(mail?.enabled) && !mail.last_error_class;
+  const calendarHealthy = Boolean(calendar?.enabled) && !calendar.last_error_class;
+  const mailSummary = mail?.enabled
+    ? `Folder ${mail.folder || "—"}; ${mail.processed_count || 0} processed.`
+    : missing(["CASCADE_ICLOUD_USER", "CASCADE_ICLOUD_APP_PASSWORD"]);
+  const calendarSummary = calendar?.enabled
+    ? calendar.calendar_found
+      ? `${calendar.imported || 0} imported; ${calendar.skipped_all_day || 0} all-day and ` +
+        `${calendar.skipped_recurring || 0} recurring skipped.`
+      : "The configured calendar was not found; nothing will be written."
+    : missing(["CASCADE_ICLOUD_USER", "CASCADE_ICLOUD_APP_PASSWORD"]);
+  const mailMeta = mail?.enabled
+    ? `Last poll ${relativeTime(mail.last_poll_at)}${mail.last_error_code ? ` · ${mail.last_error_code}` : ""}`
+    : "Credentials are checked by the API; values are never shown here.";
+  const calendarMeta = calendar?.enabled
+    ? `Last sync ${relativeTime(calendar.last_sync_at)}${calendar.last_error_class ? ` · ${calendar.last_error_class}` : ""}`
+    : "Credentials are checked by the API; values are never shown here.";
+  body.append(
+    connectorLine("Mail", mail, { healthy: mailHealthy, summary: mailSummary, meta: mailMeta }),
+    connectorLine("Calendar", calendar, {
+      healthy: calendarHealthy && Boolean(calendar.calendar_found),
+      summary: calendarSummary,
+      meta: calendarMeta,
+    }),
+  );
 }
 
 function truncate(value, limit) {
@@ -170,6 +235,17 @@ function layout(world) {
 function renderGraph() {
   const { world, assessment } = state;
   const svg = el("graph");
+  const wrap = svg.parentElement;
+  if (!world.commitments.length) {
+    svg.hidden = true;
+    if (!wrap.querySelector(".graph-empty")) {
+      wrap.prepend(text("div", "empty-state graph-empty", "No commitments yet."));
+    }
+    return;
+  }
+  const empty = wrap.querySelector(".graph-empty");
+  if (empty) empty.remove();
+  svg.hidden = false;
   svg.replaceChildren();
   const position = layout(world);
   const width = 200;
@@ -261,7 +337,9 @@ function renderGraph() {
 function renderIncident() {
   const section = el("incident");
   if (!state.incident) {
-    section.hidden = true;
+    section.hidden = false;
+    el("incident-caption").textContent = "No active incident.";
+    el("incident-body").replaceChildren(text("div", "empty-state", "No incidents yet."));
     return;
   }
   section.hidden = false;
@@ -343,7 +421,9 @@ function qualityClass(value) {
 function renderPlans() {
   const section = el("plans");
   if (!state.planning) {
-    section.hidden = true;
+    section.hidden = false;
+    el("plans-caption").textContent = "No recovery plan is waiting for review.";
+    el("plans-body").replaceChildren(text("div", "empty-state", "No plans yet."));
     return;
   }
   section.hidden = false;
@@ -428,7 +508,8 @@ function renderApproval() {
   const section = el("approval");
   const approval = state.approval;
   if (!approval || approval.status !== "PENDING") {
-    section.hidden = true;
+    section.hidden = false;
+    el("approval-body").replaceChildren(text("div", "empty-state", "No pending approvals."));
     return;
   }
   section.hidden = false;
@@ -468,7 +549,8 @@ function renderApproval() {
 function renderExecution() {
   const section = el("execution");
   if (!state.execution) {
-    section.hidden = true;
+    section.hidden = false;
+    el("execution-body").replaceChildren(text("div", "empty-state", "No executions yet."));
     return;
   }
   section.hidden = false;
@@ -525,7 +607,10 @@ function renderExtraction() {
   const body = el("extraction-body");
   body.replaceChildren();
   const result = state.extraction;
-  if (!result) return;
+  if (!result) {
+    body.append(text("div", "empty-state", "No extraction yet."));
+    return;
+  }
   const change = result.extraction;
   const tone =
     result.status === "APPLIED" ? "ok" : result.status === "UNSUPPORTED" ? "bad" : "wait";
@@ -583,11 +668,11 @@ function renderMail(recent) {
   const section = el("mail-feed");
   const list = el("mail-list");
   list.replaceChildren();
+  section.hidden = false;
   if (!recent?.length) {
-    section.hidden = true;
+    list.append(text("div", "empty-state", "No mail messages yet."));
     return;
   }
-  section.hidden = false;
   for (const item of [...recent].reverse()) {
     const row = text("div", "mail-row");
     const received = String(item.received_at || "").slice(0, 16).replace("T", " ");
@@ -664,16 +749,18 @@ async function renderAudit() {
 // ------------------------------------------------------------------ actions
 
 async function refresh() {
-  const [{ world, assessment }, incidents, skills, mail] = await Promise.all([
+  const [{ world, assessment }, incidents, skills, mail, calendar] = await Promise.all([
     call("/v1/state"),
     call("/v1/incidents"),
     call("/v1/skills"),
     call("/v1/connectors/mail/status"),
+    call("/v1/connectors/calendar/status"),
   ]);
   state.skills = skills;
   state.world = world;
   state.assessment = assessment;
   state.incident = incidents.at(-1) || null;
+  renderConnectors(mail, calendar);
   renderSummary();
   renderGraph();
   renderIncident();
